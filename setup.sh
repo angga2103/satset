@@ -208,6 +208,14 @@ function memasang_paket_dasar() {
     clear
     print_install "Memasang Paket Dasar"
     export DEBIAN_FRONTEND=noninteractive
+    if grep -rq "cermin.rumahweb.id" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
+        echo -e "${YELLOW}Terdeteksi mirror cermin.rumahweb.id. Mengganti ke mirror resmi...${NC}"
+        if grep -qi "ubuntu" /etc/os-release 2>/dev/null; then
+            sed -i 's/cermin.rumahweb.id/archive.ubuntu.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+        else
+            sed -i 's/cermin.rumahweb.id/deb.debian.org/g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+        fi
+    fi
     apt update -y
     apt upgrade -y
     apt dist-upgrade -y

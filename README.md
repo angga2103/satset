@@ -133,6 +133,18 @@ systemctl status fail2ban
 wget -q https://raw.githubusercontent.com/angga2103/satset/main/update.sh && chmod +x update.sh && ./update.sh
 ```
 
+### 4. Mirror Repositori Bermasalah (misal: `cermin.rumahweb.id`)
+Skrip instalasi sudah secara otomatis mendeteksi dan mengalihkan mirror bermasalah seperti `cermin.rumahweb.id` ke server mirror resmi Ubuntu/Debian. Jika Anda mengalami kegagalan saat menjalankan `apt update` manual sebelum instalasi, jalankan perintah ini:
+- **Untuk Ubuntu:**
+  ```bash
+  sudo sed -i 's/cermin.rumahweb.id/archive.ubuntu.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+  ```
+- **Untuk Debian:**
+  ```bash
+  sudo sed -i 's/cermin.rumahweb.id/deb.debian.org/g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+  ```
+Lalu ulangi `apt update -y`.
+
 ---
 
 ## 📄 Lisensi
