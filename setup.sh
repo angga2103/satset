@@ -658,6 +658,17 @@ function memasang_menu(){
     chmod +x menu/*
     mv -f menu/* /usr/local/sbin/
     rm -rf menu menu.zip
+    mkdir -p /etc/satset/bot-store
+    wget -q -O /etc/satset/bot-store/config.py "${REPO}bot-store/config.py" || true
+    wget -q -O /etc/satset/bot-store/database.py "${REPO}bot-store/database.py" || true
+    wget -q -O /etc/satset/bot-store/pakasir.py "${REPO}bot-store/pakasir.py" || true
+    wget -q -O /etc/satset/bot-store/xray_manager.py "${REPO}bot-store/xray_manager.py" || true
+    wget -q -O /etc/satset/bot-store/payg_worker.py "${REPO}bot-store/payg_worker.py" || true
+    wget -q -O /etc/satset/bot-store/bot.py "${REPO}bot-store/bot.py" || true
+    wget -q -O /etc/satset/bot-store/requirements.txt "${REPO}bot-store/requirements.txt" || true
+    wget -q -O /etc/satset/bot-store/satset-bot.service "${REPO}bot-store/satset-bot.service" || true
+    wget -q -O /etc/satset/bot-store/install_store.sh "${REPO}bot-store/install_store.sh" || true
+    chmod +x /etc/satset/bot-store/install_store.sh 2>/dev/null || true
     print_success "Menu"
 }
 function memasang_profile(){

@@ -188,7 +188,18 @@ unzip -q menu.zip
 chmod +x menu/*
 mv menu/* /usr/local/sbin/
 rm -rf menu menu.zip
-ok "Menu OK"
+mkdir -p /etc/satset/bot-store
+wget -q -O /etc/satset/bot-store/config.py "$REPO_RAW/bot-store/config.py" || true
+wget -q -O /etc/satset/bot-store/database.py "$REPO_RAW/bot-store/database.py" || true
+wget -q -O /etc/satset/bot-store/pakasir.py "$REPO_RAW/bot-store/pakasir.py" || true
+wget -q -O /etc/satset/bot-store/xray_manager.py "$REPO_RAW/bot-store/xray_manager.py" || true
+wget -q -O /etc/satset/bot-store/payg_worker.py "$REPO_RAW/bot-store/payg_worker.py" || true
+wget -q -O /etc/satset/bot-store/bot.py "$REPO_RAW/bot-store/bot.py" || true
+wget -q -O /etc/satset/bot-store/requirements.txt "$REPO_RAW/bot-store/requirements.txt" || true
+wget -q -O /etc/satset/bot-store/satset-bot.service "$REPO_RAW/bot-store/satset-bot.service" || true
+wget -q -O /etc/satset/bot-store/install_store.sh "$REPO_RAW/bot-store/install_store.sh" || true
+chmod +x /etc/satset/bot-store/install_store.sh 2>/dev/null || true
+ok "Menu & Bot Store OK"
 
 ############################################
 # FINAL

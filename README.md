@@ -101,11 +101,56 @@ Ketik perintah berikut langsung di terminal VPS Anda:
 - `m-vless` : Kelola Akun VLess
 - `m-trojan` : Kelola Akun Trojan
 - `m-shadowsocks` : Kelola Akun Shadowsocks
-- `m-bot` : Pengaturan Bot Telegram Notifikasi & Panel
+- `m-bot` : Pengaturan Bot Telegram Notifikasi & SATSET Store Bot
+- `bot-store` : Panel CLI Manajemen Bot Store & PAYG
 - `m-domain` : Ganti Domain atau Perbarui Sertifikat SSL
 - `fixcert` : Memperbarui / Menerbitkan Ulang Sertifikat SSL Domain
 - `speedtest` : Menjalankan Pengujian Kecepatan Jaringan VPS
 - `running` / `restart` : Memeriksa Status & Memulai Ulang Semua Layanan
+
+---
+
+## 🤖 SATSET Telegram Store Bot (QRIS Pakasir & PAYG)
+
+Repository ini dilengkapi dengan bot Telegram otomatis untuk jualan akun tunneling VPN yang terintegrasi langsung dengan payment gateway **Pakasir QRIS** dan sistem **Pay-As-You-Go (PAYG)**.
+
+### ✨ Fitur Unggulan Bot:
+1. **Sistem Saldo & Top Up Instan (QRIS Real-Time)**:
+   - Pengguna dapat mengisi saldo kapan saja secara instan.
+   - Menggunakan gateway **Pakasir**: barcode QRIS dinamis dibuat otomatis dan dapat dibayar menggunakan seluruh bank (BCA, BRI, BNI, Mandiri) dan e-wallet (GoPay, OVO, DANA, ShopeePay, LinkAja).
+   - Verifikasi otomatis ganda: background worker mendeteksi pembayaran sukses dan langsung mengkredit saldo pengguna secara *real-time*.
+2. **Paket Bulanan Standar**:
+   - Pembelian akun 30 hari seharga **Rp 8.000 / akun**.
+   - Mendukung 4 protokol: **VMess**, **VLess**, **Trojan**, dan **Shadowsocks**.
+   - Auto-create akun Xray langsung di server dan mengirimkan link TLS, Non-TLS, gRPC, serta format konfigurasi siap pakai.
+3. **Fitur Pay-As-You-Go (PAYG)**:
+   - Skema fleksibel tanpa komitmen sebulan: pengguna hanya membayar harian sebesar **Rp 300 / hari**.
+   - Sistem melakukan auto-debet saldo secara otomatis setiap pergantian hari (00:00 WIB).
+   - Jika saldo pengguna habis, bot otomatis menonaktifkan akun sementara dan memberi notifikasi ke pengguna untuk segera melakukan top up.
+4. **Trial Gratis 1 Hari**:
+   - Fasilitas uji coba 24 jam gratis bagi pengguna baru (dibatasi 1x per ID Telegram).
+5. **Panel Admin & Mass Broadcast**:
+   - Admin dapat mengirimkan pesan broadcast ke seluruh pengguna bot dengan 1 kali klik.
+   - Admin dapat menambahkan saldo pengguna secara manual (`/addsaldo <user_id> <jumlah>`).
+   - Statistik live: total pengguna, total akun aktif, dan total omset pendapatan.
+
+### 🚀 Cara Memasang Bot Store:
+Jalankan perintah berikut di terminal VPS Anda:
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/angga2103/satset/main/bot-store/install_store.sh)
+```
+*Atau buka menu CLI VPS dengan mengetik `menu` -> pilih `08` (Bot Telegram) -> pilih `01` (Pasang/Setup Bot Store).*
+
+Ikuti panduan interaktif untuk memasukkan:
+- **BOT_TOKEN** (didapatkan dari [@BotFather](https://t.me/BotFather))
+- **ADMIN_ID** (ID akun Telegram Anda, dapat dicek via [@userinfobot](https://t.me/userinfobot))
+- **PAKASIR_PROJECT_SLUG** & **PAKASIR_API_KEY** (dari dashboard akun [Pakasir](https://app.pakasir.com/))
+
+### ⚙️ Manajemen Bot Store via CLI:
+Kapan saja Anda ingin memeriksa log bot, merestart service, atau mengubah harga, cukup ketik:
+```bash
+bot-store
+```
 
 ---
 

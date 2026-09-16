@@ -1,0 +1,18 @@
+[Unit]
+Description=SATSET Telegram Store & PAYG Bot Service
+After=network.target xray.service
+Wants=xray.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/etc/satset/bot-store
+EnvironmentFile=-/etc/satset/bot.env
+ExecStart=/etc/satset/venv/bin/python /etc/satset/bot-store/bot.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

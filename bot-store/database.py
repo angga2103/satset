@@ -1,0 +1,279 @@
+import sqlite3
+import os
+import datetime
+
+DB_PATH = "/etc/satset/store.db"
+LOCAL_DB = os.path.join(os.path.dirname(__file__), "store.db")
+
+def get_db_file():
+    if os.path.exists("/etc/satset"):
+        return DB_PATH
+    return LOCAL_DB
+
+def get_connection():
+    db_file = get_db_file()
+    os.makedirs(os.path.dirname(db_file), exist_ok=True)
+    conn = sqlite3.connect(db_file, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_connection()
+    c = conn.cursor()
+    
+    # Table: Users
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        username TEXT,
+        first_name TEXT,
+        balance INTEGER DEFAULT 0,
+        created_at TEXT,
+        is_admin INTEGER DEFAULT 0
+    )
+    """)
+    
+    # Table: Transactions
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS transactions (
+        order_id TEXT PRIMARY KEY,
+        user_id INTEGER,
+        amount INTEGER,
+        payment_method TEXT DEFAULT 'qris',
+        qris_url TEXT,
+        qris_string TEXT,
+        status TEXT DEFAULT 'pending',
+        created_at TEXT,
+        completed_at TEXT
+    )
+    """)
+    
+    # Table: VPN Accounts
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS vpn_accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        protocol TEXT,
+        vpn_username TEXT UNIQUE,
+        uuid TEXT,
+        plan_type TEXT,
+        exp_date TEXT,
+        config_link TEXT,
+        status TEXT DEFAULT 'active',
+        created_at TEXT
+    )
+    """)
+    
+    # Table: Pay-As-You-Go Subscriptions
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS payg_subscriptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        vpn_username TEXT UNIQUE,
+        protocol TEXT,
+        model TEXT,
+        quota_total INTEGER DEFAULT 0,
+        quota_used INTEGER DEFAULT 0,
+        last_deducted_date TEXT,
+        status TEXT DEFAULT 'active'
+    )
+    """)
+    
+    conn.commit()
+    conn.close()
+
+def get_or_create_user(user_id: int, username: str, first_name: str, admin_id=None):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    is_admin = 1 if (admin_id and str(user_id) == str(admin_id)) else 0
+    
+    if not row:
+        c.execute("""
+        INSERT INTO users (user_id, username, first_name, balance, created_at, is_admin)
+        VALUES (?, ?, ?, 0, ?, ?)
+        """, (user_id, username or "", first_name or "", now, is_admin))
+        conn.commit()
+        c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        row = c.fetchone()
+    else:
+        # Update is_admin if matches admin_id
+        if is_admin and not row["is_admin"]:
+            c.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (user_id,))
+            conn.commit()
+            
+    conn.close()
+    return dict(row)
+
+def get_user(user_id: int):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_all_users():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT user_id, username, first_name, balance FROM users")
+    rows = c.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_balance(user_id: int) -> int:
+    u = get_user(user_id)
+    return u["balance"] if u else 0
+
+def add_balance(user_id: int, amount: int) -> int:
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+    conn.commit()
+    c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+    res = c.fetchone()
+    conn.close()
+    return res["balance"] if res else 0
+
+def deduct_balance(user_id: int, amount: int) -> bool:
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    if not row or row["balance"] < amount:
+        conn.close()
+        return False
+        
+    c.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (amount, user_id))
+    conn.commit()
+    conn.close()
+    return True
+
+def create_transaction(order_id: str, user_id: int, amount: int, qris_url: str = "", qris_string: str = ""):
+    conn = get_connection()
+    c = conn.cursor()
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute("""
+    INSERT INTO transactions (order_id, user_id, amount, payment_method, qris_url, qris_string, status, created_at)
+    VALUES (?, ?, ?, 'qris', ?, ?, 'pending', ?)
+    """, (order_id, user_id, amount, qris_url, qris_string, now))
+    conn.commit()
+    conn.close()
+
+def get_transaction(order_id: str):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM transactions WHERE order_id = ?", (order_id,))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_pending_transactions():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM transactions WHERE status = 'pending'")
+    rows = c.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def complete_transaction(order_id: str):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM transactions WHERE order_id = ? AND status = 'pending'", (order_id,))
+    tx = c.fetchone()
+    if not tx:
+        conn.close()
+        return None
+        
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute("UPDATE transactions SET status = 'completed', completed_at = ? WHERE order_id = ?", (now, order_id))
+    c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (tx["amount"], tx["user_id"]))
+    conn.commit()
+    conn.close()
+    return dict(tx)
+
+def add_vpn_account(user_id: int, protocol: str, vpn_username: str, uuid: str, plan_type: str, exp_date: str, config_link: str):
+    conn = get_connection()
+    c = conn.cursor()
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute("""
+    INSERT INTO vpn_accounts (user_id, protocol, vpn_username, uuid, plan_type, exp_date, config_link, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)
+    """, (user_id, protocol, vpn_username, uuid, plan_type, exp_date, config_link, now))
+    conn.commit()
+    conn.close()
+
+def get_user_vpn_accounts(user_id: int):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM vpn_accounts WHERE user_id = ? ORDER BY id DESC", (user_id,))
+    rows = c.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def has_used_trial(user_id: int) -> bool:
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT id FROM vpn_accounts WHERE user_id = ? AND plan_type = 'trial'", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return row is not None
+
+def add_payg_subscription(user_id: int, vpn_username: str, protocol: str, model: str = "daily", quota_total: int = 0):
+    conn = get_connection()
+    c = conn.cursor()
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    c.execute("""
+    INSERT OR REPLACE INTO payg_subscriptions (user_id, vpn_username, protocol, model, quota_total, quota_used, last_deducted_date, status)
+    VALUES (?, ?, ?, ?, ?, 0, ?, 'active')
+    """, (user_id, vpn_username, protocol, model, quota_total, today))
+    conn.commit()
+    conn.close()
+
+def get_active_payg_daily_subscriptions():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM payg_subscriptions WHERE model = 'daily' AND status = 'active'")
+    rows = c.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def update_payg_deduction(sub_id: int, date_str: str):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE payg_subscriptions SET last_deducted_date = ? WHERE id = ?", (date_str, sub_id))
+    conn.commit()
+    conn.close()
+
+def set_payg_status(sub_id: int, status: str):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE payg_subscriptions SET status = ? WHERE id = ?", (status, sub_id))
+    conn.commit()
+    conn.close()
+
+def get_total_stats():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) as total_users FROM users")
+    users = c.fetchone()["total_users"]
+    
+    c.execute("SELECT COUNT(*) as total_accounts FROM vpn_accounts")
+    accounts = c.fetchone()["total_accounts"]
+    
+    c.execute("SELECT SUM(amount) as total_revenue FROM transactions WHERE status = 'completed'")
+    rev_row = c.fetchone()
+    revenue = rev_row["total_revenue"] if rev_row and rev_row["total_revenue"] else 0
+    
+    conn.close()
+    return {
+        "users": users,
+        "accounts": accounts,
+        "revenue": revenue
+    }
+
+# Initialize tables when imported
+init_db()
