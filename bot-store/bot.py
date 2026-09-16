@@ -156,6 +156,8 @@ def initiate_qris_payment(user_id: int, amount: int):
 
     qr_url = res.get("qr_url", "")
     qr_string = res.get("qr_string", "")
+    total_payment = res.get("total_payment") or amount
+    fee = res.get("fee", 0)
     database.create_transaction(order_id, user_id, amount, qr_url, qr_string)
 
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -163,17 +165,21 @@ def initiate_qris_payment(user_id: int, amount: int):
     b_cancel = types.InlineKeyboardButton("❌ Batalkan", callback_data="menu_home")
     markup.add(b_check, b_cancel)
 
+    fee_text = f"\nBiaya Admin/Kode Unik: <b>Rp {fee:,}</b>" if fee > 0 else ""
     caption = (
         f"🧾 <b>INVOICE PEMBAYARAN QRIS</b>\n\n"
         f"Order ID: <code>{order_id}</code>\n"
-        f"Jumlah Pembayaran: <b>Rp {amount:,}</b>\n"
+        f"Nominal Saldo: <b>Rp {amount:,}</b>"
+        f"{fee_text}\n"
+        f"Total Bayar: <b>Rp {total_payment:,}</b>\n"
         f"Metode: <b>QRIS Real-Time</b>\n\n"
+        f"⚠️ <i>Harap transfer tepat sesuai <b>Total Bayar</b> agar saldo otomatis masuk!</i>\n\n"
         f"📌 <b>Cara Pembayaran:</b>\n"
         f"1. Simpan/Screenshot gambar QR Code di atas\n"
-        f"2. Buka aplikasi M-Banking atau E-Wallet (Dana, OVO, Gopay, BCA, dll)\n"
+        f"2. Buka aplikasi M-Banking atau E-Wallet (Dana, OVO, Gopay, BCA, ShopeePay, dll)\n"
         f"3. Pilih menu <b>Scan QRIS</b> dan upload gambar barcode\n"
         f"4. Selesaikan pembayaran\n"
-        f"5. Saldo akan otomatis masuk dalam beberapa detik!"
+        f"5. Klik tombol <b>Cek Status Pembayaran</b> di bawah atau tunggu beberapa detik!"
     )
 
     # If qr_string is available, generate QR Code image using qrcode lib

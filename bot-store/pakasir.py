@@ -35,23 +35,49 @@ def create_qris(order_id: str, amount: int) -> dict:
         data = resp.json()
         
         # Check standard Pakasir response formats
+        # Pakasir returns: {"payment": {"project": ..., "order_id": ..., "amount": ..., "total_payment": ..., "payment_number": "000201...", ...}}
         is_success = False
         if resp.status_code == 200:
             status_val = str(data.get("status", "")).lower()
-            if status_val in ["success", "true", "ok", "completed"] or "data" in data or "qr_string" in data:
+            if (
+                status_val in ["success", "true", "ok", "completed"]
+                or "payment" in data
+                or "data" in data
+                or "qr_string" in data
+                or "payment_number" in data
+            ):
                 is_success = True
 
         if is_success:
-            inner_data = data.get("data", data)
-            qr_url = inner_data.get("qr_url") or inner_data.get("qris_url") or inner_data.get("payment_url") or ""
-            qr_string = inner_data.get("qr_string") or inner_data.get("qris_string") or inner_data.get("qr_code") or ""
-            total_amount = inner_data.get("total_amount") or inner_data.get("amount") or amount
+            inner_data = data.get("payment") or data.get("data") or data
+            qr_url = (
+                inner_data.get("qr_url")
+                or inner_data.get("qris_url")
+                or inner_data.get("payment_url")
+                or ""
+            )
+            qr_string = (
+                inner_data.get("payment_number")
+                or inner_data.get("qr_string")
+                or inner_data.get("qris_string")
+                or inner_data.get("qr_code")
+                or ""
+            )
+            total_amount = (
+                inner_data.get("total_payment")
+                or inner_data.get("total_amount")
+                or inner_data.get("amount")
+                or amount
+            )
+            fee = inner_data.get("fee", 0)
             expired_at = inner_data.get("expired_at") or inner_data.get("expiry_time") or ""
 
             return {
                 "success": True,
                 "order_id": str(order_id),
-                "amount": int(total_amount),
+                "amount": int(amount),
+                "total_payment": int(total_amount),
+                "fee": int(fee) if fee else 0,
                 "qr_url": qr_url,
                 "qr_string": qr_string,
                 "expired_at": expired_at,
@@ -76,7 +102,7 @@ def create_qris(order_id: str, amount: int) -> dict:
             "error": f"Gagal membuat QRIS: {str(e)}"
         }
 
-def check_transaction(order_id: str) -> dict:
+def check_transaction(order_id: str, amount: int = None) -> dict:
     """
     Check transaction status from Pakasir API.
     Returns dict with status: 'completed', 'pending', 'expired', 'failed'
@@ -91,26 +117,43 @@ def check_transaction(order_id: str) -> dict:
             "message": "Pakasir API credentials belum dikonfigurasi."
         }
 
+    if amount is None:
+        try:
+            import database
+            tx = database.get_transaction(order_id)
+            if tx:
+                amount = tx.get("amount")
+        except Exception:
+            pass
+
     url = f"{BASE_URL}/transactiondetail"
-    payload = {
+    params = {
         "project": project,
         "order_id": str(order_id),
         "api_key": api_key
     }
+    if amount is not None:
+        params["amount"] = int(amount)
 
     try:
-        resp = requests.post(url, json=payload, timeout=15)
+        # Pakasir official doc specifies GET for transactiondetail
+        resp = requests.get(url, params=params, timeout=15)
+        if resp.status_code != 200:
+            # Fallback to POST
+            resp = requests.post(url, json=params, timeout=15)
+
         data = resp.json()
 
-        # Pakasir returns status in data
-        inner = data.get("data", data)
+        # Pakasir returns status in transaction, payment, or data
+        inner = data.get("transaction") or data.get("payment") or data.get("data") or data
         tx_status = str(inner.get("status", "")).lower()
 
         if tx_status in ["completed", "success", "paid", "lunas", "settlement"]:
             return {
                 "status": "completed",
                 "order_id": str(order_id),
-                "amount": inner.get("amount", 0),
+                "amount": inner.get("amount", amount or 0),
+                "total_payment": inner.get("total_payment", 0),
                 "raw": data
             }
         elif tx_status in ["pending", "unpaid", "menunggu"]:
