@@ -458,7 +458,7 @@ def callback_take_trial(call):
     wait_msg = bot.send_message(user_id, f"⏳ <i>Membuat akun Trial {proto.upper()}...</i>")
     try:
         acc = xray_manager.create_account(proto, uname, days=1, quota_gb=trial_quota, ip_limit=trial_ip)
-        database.add_vpn_account(user_id, proto, uname, acc["uuid"], "trial", acc["exp_date"], acc["primary_link"], quota_gb=trial_quota, ip_limit=trial_ip)
+        database.add_vpn_account(user_id, proto, uname, acc["uuid"], "trial", acc["exp_date"], acc["primary_link"], quota_gb=trial_quota, ip_limit=trial_ip, price_paid=0)
         bot.delete_message(user_id, wait_msg.message_id)
         send_account_details(user_id, acc, title="🎉 AKUN TRIAL 1 HARI BERHASIL DIBUAT")
     except Exception as e:
@@ -488,14 +488,68 @@ def callback_my_accounts(call):
     text = "📱 <b>DAFTAR AKUN VPN ANDA:</b>\nKlik salah satu akun untuk melihat detail & link config:"
     bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
 
+def calculate_account_refund(acc: dict) -> dict:
+    """Calculate refund amount and breakdown for account cancellation."""
+    cfg = load_config()
+    plan_type = str(acc.get("plan_type", "monthly")).lower()
+    
+    if plan_type == "payg":
+        return {
+            "plan_type": "payg",
+            "price_paid": acc.get("price_paid") or cfg.get("PRICE_PAYG_DAILY", 300),
+            "remaining_days": 0,
+            "total_days": 1,
+            "refund_amount": 0,
+            "explanation": "Langganan auto-debet harian PAYG langsung dihentikan. Biaya harian yang sudah berjalan tidak ditarik ulang, dan saldo bot Anda tetap aman tanpa potongan lagi."
+        }
+    elif plan_type == "trial":
+        return {
+            "plan_type": "trial",
+            "price_paid": 0,
+            "remaining_days": 0,
+            "total_days": 1,
+            "refund_amount": 0,
+            "explanation": "Akun trial gratis 1 hari dibatalkan dan dihapus dari server."
+        }
+    else:
+        # Monthly or fixed duration package
+        price_paid = acc.get("price_paid") or 0
+        if price_paid <= 0:
+            price_paid = cfg.get("PRICE_MONTHLY", 8000)
+            
+        exp_str = str(acc.get("exp_date", "")).strip()
+        remaining_days = 0
+        total_days = 30
+        
+        try:
+            exp_date = datetime.datetime.strptime(exp_str[:10], "%Y-%m-%d").date()
+            today = datetime.date.today()
+            diff = (exp_date - today).days
+            remaining_days = max(0, min(total_days, diff))
+        except Exception:
+            remaining_days = 0
+            
+        if remaining_days > 0 and price_paid > 0:
+            refund_amount = int(round((remaining_days / float(total_days)) * price_paid))
+        else:
+            refund_amount = 0
+            
+        return {
+            "plan_type": plan_type,
+            "price_paid": price_paid,
+            "remaining_days": remaining_days,
+            "total_days": total_days,
+            "refund_amount": refund_amount,
+            "explanation": f"Refund pro-rata dihitung dari sisa masa aktif ({remaining_days}/{total_days} hari) x Rp {price_paid:,}."
+        }
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("detail_acc_"))
 def callback_account_detail(call):
     user_id = call.from_user.id
     acc_id = int(call.data.replace("detail_acc_", ""))
-    accounts = database.get_user_vpn_accounts(user_id)
-    acc = next((a for a in accounts if a["id"] == acc_id), None)
+    acc = database.get_vpn_account_by_id(acc_id)
 
-    if not acc:
+    if not acc or acc["user_id"] != user_id:
         bot.answer_callback_query(call.id, "Akun tidak ditemukan.", show_alert=True)
         return
 
@@ -503,6 +557,21 @@ def callback_account_detail(call):
     proto = acc['protocol'].upper()
     uname = acc['vpn_username']
     pwd = acc['uuid']
+
+    plan_type = str(acc.get('plan_type', 'monthly')).lower()
+    raw_exp = str(acc.get('exp_date', ''))
+    if plan_type == "payg" or raw_exp.upper() == "PAYG":
+        exp_display = "⚡ Aktif Selama Saldo Cukup (PAYG Auto-Debet)"
+        paket_display = "PAY-AS-YOU-GO (Harian)"
+    elif plan_type == "trial":
+        exp_display = f"{raw_exp} (Trial 1 Hari)"
+        paket_display = "TRIAL (Uji Coba)"
+    else:
+        exp_display = raw_exp or "-"
+        paket_display = f"{plan_type.upper()} (30 Hari)"
+
+    quota_display = f"{acc.get('quota_gb', 0)} GB" if acc.get('quota_gb', 0) > 0 else "Unlimited"
+    ip_display = f"{acc.get('ip_limit', 1)} IP"
 
     if acc['protocol'].lower() in ["ssh", "openssh", "dropbear"]:
         payload = f"GET / HTTP/1.1[crlf]Host: {domain}[crlf]Upgrade: websocket[crlf][crlf]"
@@ -517,8 +586,9 @@ def callback_account_detail(call):
             f"Port WS NonTLS: <code>80, 8080, 8880</code>\n"
             f"Port WS TLS   : <code>443, 8443</code>\n"
             f"BadVPN UDP GW : <code>7100, 7200, 7300</code>\n"
-            f"Paket         : <b>{acc['plan_type'].upper()}</b>\n"
-            f"Expired       : <b>{acc['exp_date']}</b>\n\n"
+            f"Paket         : <b>{paket_display}</b>\n"
+            f"Limit IP      : <code>{ip_display}</code>\n"
+            f"Masa Aktif    : <b>{exp_display}</b>\n\n"
             f"🔗 <b>Payload WebSocket:</b>\n"
             f"<code>{payload}</code>"
         )
@@ -528,15 +598,160 @@ def callback_account_detail(call):
             f"Protokol: <b>{proto}</b>\n"
             f"Username: <code>{uname}</code>\n"
             f"UUID / Password: <code>{pwd}</code>\n"
-            f"Paket: <b>{acc['plan_type'].upper()}</b>\n"
-            f"Expired: <b>{acc['exp_date']}</b>\n"
+            f"Paket: <b>{paket_display}</b>\n"
+            f"Limit IP: <code>{ip_display}</code>\n"
+            f"Limit Kuota: <code>{quota_display}</code>\n"
+            f"Masa Aktif: <b>{exp_display}</b>\n"
             f"Domain: <code>{domain}</code>\n\n"
             f"🔗 <b>Config Link:</b>\n"
             f"<code>{acc['config_link']}</code>"
         )
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🔙 Kembali ke Daftar Akun", callback_data="menu_my_accounts"))
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("❌ Batalkan & Hapus Akun (Refund Saldo)", callback_data=f"cancel_acc_{acc_id}"),
+        types.InlineKeyboardButton("🔙 Kembali ke Daftar Akun", callback_data="menu_my_accounts")
+    )
     bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("cancel_acc_"))
+def callback_cancel_account(call):
+    user_id = call.from_user.id
+    acc_id = int(call.data.replace("cancel_acc_", ""))
+    acc = database.get_vpn_account_by_id(acc_id)
+
+    if not acc or acc["user_id"] != user_id:
+        bot.answer_callback_query(call.id, "Akun tidak ditemukan atau bukan milik Anda.", show_alert=True)
+        return
+
+    proto = acc["protocol"].upper()
+    uname = acc["vpn_username"]
+    plan_type = str(acc.get("plan_type", "monthly")).lower()
+    ref_info = calculate_account_refund(acc)
+    refund_amt = ref_info["refund_amount"]
+    current_bal = database.get_balance(user_id)
+
+    if plan_type == "payg":
+        text = (
+            f"⚠️ <b>KONFIRMASI PEMBATALAN AKUN PAYG</b>\n\n"
+            f"Apakah Anda yakin ingin menghentikan & menghapus akun ini?\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Username:</b> <code>{uname}</code>\n"
+            f"• <b>Protokol:</b> <code>{proto}</code>\n"
+            f"• <b>Paket:</b> <b>PAY-AS-YOU-GO (Harian)</b>\n"
+            f"• <b>Saldo Utama Saat Ini:</b> <b>Rp {current_bal:,}</b>\n"
+            f"• <b>Refund Saldo:</b> <b>Rp 0</b> (Auto-Debet dihentikan)\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"💡 <i>{ref_info['explanation']}</i>\n\n"
+            f"Akun akan langsung dihapus dari server dan saldo utama Anda tidak akan terpotong lagi di kemudian hari."
+        )
+    elif plan_type == "trial":
+        text = (
+            f"⚠️ <b>KONFIRMASI HAPUS AKUN TRIAL</b>\n\n"
+            f"Apakah Anda yakin ingin menghapus akun trial ini?\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Username:</b> <code>{uname}</code>\n"
+            f"• <b>Protokol:</b> <code>{proto}</code>\n"
+            f"• <b>Paket:</b> <b>TRIAL (Uji Coba 1 Hari)</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"💡 <i>{ref_info['explanation']}</i>\n\n"
+            f"Akun akan langsung dihapus dari server."
+        )
+    else:
+        text = (
+            f"⚠️ <b>KONFIRMASI PEMBATALAN & REFUND AKUN</b>\n\n"
+            f"Apakah Anda yakin ingin membatalkan langganan akun ini?\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Username:</b> <code>{uname}</code>\n"
+            f"• <b>Protokol:</b> <code>{proto}</code>\n"
+            f"• <b>Paket:</b> <b>BULANAN (30 Hari)</b>\n"
+            f"• <b>Harga Beli:</b> <b>Rp {ref_info['price_paid']:,}</b>\n"
+            f"• <b>Sisa Masa Aktif:</b> <b>{ref_info['remaining_days']} hari</b>\n"
+            f"• <b>Estimasi Refund Saldo:</b> <b>Rp {refund_amt:,}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"💡 <i>{ref_info['explanation']}</i>\n\n"
+            f"Setelah dikonfirmasi:\n"
+            f"1. Akun langsung dinonaktifkan & dihapus dari server.\n"
+            f"2. Saldo refund sebesar <b>Rp {refund_amt:,}</b> akan otomatis dikreditkan kembali ke saldo bot Anda."
+        )
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("🗑️ Ya, Batalkan & Hapus Akun", callback_data=f"confirm_cancel_acc_{acc_id}"),
+        types.InlineKeyboardButton("🔙 Jangan, Kembali ke Detail", callback_data=f"detail_acc_{acc_id}")
+    )
+    bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("confirm_cancel_acc_"))
+def callback_confirm_cancel_account(call):
+    user_id = call.from_user.id
+    acc_id = int(call.data.replace("confirm_cancel_acc_", ""))
+    acc = database.get_vpn_account_by_id(acc_id)
+
+    if not acc or acc["user_id"] != user_id:
+        bot.answer_callback_query(call.id, "Akun tidak ditemukan atau sudah dihapus.", show_alert=True)
+        return
+
+    proto = acc["protocol"].lower()
+    uname = acc["vpn_username"]
+    plan_type = str(acc.get("plan_type", "monthly")).lower()
+
+    # Calculate refund
+    ref_info = calculate_account_refund(acc)
+    refund_amt = ref_info["refund_amount"]
+
+    # 1. Delete from VPS server (xray / ssh)
+    try:
+        xray_manager.delete_account(proto, uname)
+    except Exception as e:
+        logger.error(f"Error deleting {uname} from server: {e}")
+
+    # 2. Delete from database (removes from vpn_accounts & payg_subscriptions)
+    database.delete_vpn_account_by_username(uname)
+
+    # 3. Credit refund balance if > 0
+    if refund_amt > 0:
+        new_balance = database.add_balance(user_id, refund_amt)
+        database.record_refund_transaction(user_id, refund_amt, f"Refund pembatalan akun {uname}")
+    else:
+        new_balance = database.get_balance(user_id)
+
+    bot.answer_callback_query(call.id, "Akun berhasil dibatalkan dan dihapus.")
+
+    success_text = (
+        f"✅ <b>AKUN BERHASIL DIBATALKAN & DIHAPUS</b>\n\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Username:</b> <code>{uname}</code>\n"
+        f"• <b>Protokol:</b> <code>{proto.upper()}</code>\n"
+        f"• <b>Paket:</b> <b>{plan_type.upper()}</b>\n"
+    )
+
+    if refund_amt > 0:
+        success_text += (
+            f"• <b>Dana Refund:</b> <b>+Rp {refund_amt:,}</b> (Masuk Saldo)\n"
+            f"• <b>Saldo Anda Sekarang:</b> <b>Rp {new_balance:,}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Saldo telah otomatis dikembalikan ke akun bot Anda."
+        )
+    elif plan_type == "payg":
+        success_text += (
+            f"• <b>Status PAYG:</b> <b>Berhenti Total (Auto-debet dinonaktifkan)</b>\n"
+            f"• <b>Sisa Saldo Utama:</b> <b>Rp {new_balance:,}</b> (Aman)\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Akun telah dihapus dari server dan tidak akan ada tagihan harian lagi."
+        )
+    else:
+        success_text += (
+            f"• <b>Status:</b> <b>Berhasil dihapus dari server</b>\n"
+            f"• <b>Saldo Anda:</b> <b>Rp {new_balance:,}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+        )
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("📱 Lihat Akun Saya Lainnya", callback_data="menu_my_accounts"),
+        types.InlineKeyboardButton("🔙 Menu Utama", callback_data="menu_home")
+    )
+    bot.edit_message_text(success_text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
 
 # Server info
 @bot.callback_query_handler(func=lambda call: call.data == "menu_server_info")
@@ -907,7 +1122,9 @@ def callback_manage_user(call):
     proto = acc["protocol"]
     usage = xray_manager.get_user_usage_and_status(uname, proto)
     status_str = "🟢 AKTIF" if not usage["is_locked"] else f"🔴 TERKUNCI ({usage.get('lock_reason', '')})"
-    tg_user = f"@{acc['tg_username']}" if acc.get("tg_username") else str(acc.get("user_id"))
+    plan_type = str(acc.get("plan_type", "")).lower()
+    raw_exp = str(acc.get("exp_date", ""))
+    exp_display = "⚡ PAYG (Auto-Debet Harian)" if (plan_type == "payg" or raw_exp.upper() == "PAYG") else (raw_exp or "-")
 
     text = (
         f"👤 <b>KONTROL PENGGUNA: {uname}</b>\n"
@@ -916,7 +1133,7 @@ def callback_manage_user(call):
         f"» Paket        : <b>{acc['plan_type'].upper()}</b>\n"
         f"» Pemilik TG   : <code>{tg_user}</code>\n"
         f"» Status Akun  : <b>{status_str}</b>\n"
-        f"» Masa Aktif   : <code>{acc['exp_date']}</code>\n"
+        f"» Masa Aktif   : <code>{exp_display}</code>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"📊 <b>KUOTA & TRAFIK:</b>\n"
         f"» Terpakai     : <b>{usage['used_human']} / {usage['quota_human']}</b>\n"
@@ -1130,7 +1347,7 @@ def handle_text_inputs(message):
             q_gb = cfg.get("DEFAULT_QUOTA_GB", 350)
             ip_l = cfg.get("DEFAULT_IP_LIMIT", 1)
             acc = xray_manager.create_account(proto, text, days=30, quota_gb=q_gb, ip_limit=ip_l)
-            database.add_vpn_account(user_id, proto, text, acc["uuid"], "monthly", acc["exp_date"], acc["primary_link"], quota_gb=q_gb, ip_limit=ip_l)
+            database.add_vpn_account(user_id, proto, text, acc["uuid"], "monthly", acc["exp_date"], acc["primary_link"], quota_gb=q_gb, ip_limit=ip_l, price_paid=price)
             bot.delete_message(user_id, wait_msg.message_id)
             send_account_details(user_id, acc, title=f"🎉 AKUN {proto.upper()} 30 HARI BERHASIL DIBUAT")
         except Exception as e:
@@ -1162,9 +1379,11 @@ def handle_text_inputs(message):
             cfg = load_config()
             q_gb = cfg.get("DEFAULT_QUOTA_GB", 350)
             ip_l = cfg.get("DEFAULT_IP_LIMIT", 1)
-            acc = xray_manager.create_account(proto, text, days=60, quota_gb=q_gb, ip_limit=ip_l)
-            database.add_vpn_account(user_id, proto, text, acc["uuid"], "payg", acc["exp_date"], acc["primary_link"], quota_gb=q_gb, ip_limit=ip_l)
+            acc = xray_manager.create_account(proto, text, days=3650, quota_gb=q_gb, ip_limit=ip_l)
+            database.add_vpn_account(user_id, proto, text, acc["uuid"], "payg", "PAYG", acc["primary_link"], quota_gb=q_gb, ip_limit=ip_l, price_paid=daily_price)
             database.add_payg_subscription(user_id, text, proto, "daily")
+            acc["plan_type"] = "payg"
+            acc["exp_human"] = "⚡ Aktif Selama Saldo Cukup (PAYG Harian)"
             bot.delete_message(user_id, wait_msg.message_id)
             send_account_details(user_id, acc, title=f"⚡ AKUN PAYG {proto.upper()} AKTIF")
         except Exception as e:
@@ -1279,10 +1498,13 @@ def handle_text_inputs(message):
         proto = acc["protocol"]
         usage = xray_manager.get_user_usage_and_status(text, proto)
         status_str = "🟢 AKTIF" if not usage["is_locked"] else f"🔴 TERKUNCI ({usage.get('lock_reason', '')})"
+        plan_type = str(acc.get("plan_type", "")).lower()
+        raw_exp = str(acc.get("exp_date", ""))
+        exp_display = "⚡ PAYG (Auto-Debet)" if (plan_type == "payg" or raw_exp.upper() == "PAYG") else (raw_exp or "-")
         card_text = (
             f"👤 <b>KONTROL PENGGUNA: {text}</b>\n"
             f"» Protokol: <b>{proto.upper()}</b> | Paket: <b>{acc['plan_type'].upper()}</b>\n"
-            f"» Status: <b>{status_str}</b> | Expired: <code>{acc['exp_date']}</code>\n"
+            f"» Status: <b>{status_str}</b> | Expired: <code>{exp_display}</code>\n"
             f"» Kuota: <b>{usage['used_human']} / {usage['quota_human']}</b> ({usage['percent']:.1f}%)\n"
             f"» Batas IP: <b>{usage['ip_limit']} IP</b> | Aktif: <b>{usage['active_ip_count']} IP</b>"
         )
@@ -1325,10 +1547,15 @@ def re_valid_username(u: str) -> bool:
 def send_account_details(user_id: int, acc: dict, title: str):
     domain = acc.get("domain") or xray_manager.get_domain()
     proto = acc["protocol"].upper()
-    uname = acc["username"]
-    uuid_str = acc["uuid"]
-    exp_h = acc.get("exp_human", acc.get("exp_date", ""))
-    
+    uname = acc.get("username") or acc.get("vpn_username", "")
+    uuid_str = acc.get("uuid", "")
+    plan_type = str(acc.get("plan_type", "")).lower()
+    raw_exp = str(acc.get("exp_date", ""))
+    if plan_type == "payg" or raw_exp.upper() == "PAYG" or "PAYG" in title.upper():
+        exp_h = "⚡ Aktif Selama Saldo Cukup (PAYG Harian)"
+    else:
+        exp_h = acc.get("exp_human", acc.get("exp_date", ""))
+        
     if acc["protocol"].lower() in ["ssh", "openssh", "dropbear"]:
         ip_srv = acc.get("ip_server", domain)
         pwd = acc.get("password", uuid_str)

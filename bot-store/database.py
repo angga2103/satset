@@ -12,7 +12,9 @@ def get_db_file():
 
 def get_connection():
     db_file = get_db_file()
-    os.makedirs(os.path.dirname(db_file), exist_ok=True)
+    db_dir = os.path.dirname(db_file)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     conn = sqlite3.connect(db_file, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
@@ -73,12 +75,19 @@ def init_db():
         ("quota_gb", "INTEGER DEFAULT 350"),
         ("ip_limit", "INTEGER DEFAULT 1"),
         ("locked_until", "TEXT"),
-        ("lock_reason", "TEXT")
+        ("lock_reason", "TEXT"),
+        ("price_paid", "INTEGER DEFAULT 0")
     ]:
         try:
             c.execute(f"ALTER TABLE vpn_accounts ADD COLUMN {col} {col_def}")
         except Exception:
             pass
+            
+    # Fix existing PAYG accounts: exp_date must be 'PAYG' rather than fixed date
+    try:
+        c.execute("UPDATE vpn_accounts SET exp_date = 'PAYG' WHERE plan_type = 'payg' AND (exp_date != 'PAYG' OR exp_date IS NULL)")
+    except Exception:
+        pass
     
     # Table: Pay-As-You-Go Subscriptions
     c.execute("""
@@ -211,14 +220,14 @@ def complete_transaction(order_id: str):
     conn.close()
     return dict(tx)
 
-def add_vpn_account(user_id: int, protocol: str, vpn_username: str, uuid: str, plan_type: str, exp_date: str, config_link: str, quota_gb: int = 350, ip_limit: int = 1):
+def add_vpn_account(user_id: int, protocol: str, vpn_username: str, uuid: str, plan_type: str, exp_date: str, config_link: str, quota_gb: int = 350, ip_limit: int = 1, price_paid: int = 0):
     conn = get_connection()
     c = conn.cursor()
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute("""
-    INSERT INTO vpn_accounts (user_id, protocol, vpn_username, uuid, plan_type, exp_date, config_link, status, quota_gb, ip_limit, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
-    """, (user_id, protocol, vpn_username, uuid, plan_type, exp_date, config_link, quota_gb, ip_limit, now))
+    INSERT INTO vpn_accounts (user_id, protocol, vpn_username, uuid, plan_type, exp_date, config_link, status, quota_gb, ip_limit, price_paid, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+    """, (user_id, protocol, vpn_username, uuid, plan_type, exp_date, config_link, quota_gb, ip_limit, price_paid, now))
     conn.commit()
     conn.close()
 
@@ -364,6 +373,39 @@ def get_all_vpn_accounts_detailed(limit: int = 100):
     rows = c.fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+def get_vpn_account_by_id(acc_id: int):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        SELECT v.*, u.username as tg_username, u.first_name as tg_first_name, u.balance
+        FROM vpn_accounts v
+        LEFT JOIN users u ON v.user_id = u.user_id
+        WHERE v.id = ?
+    """, (acc_id,))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def cancel_payg_subscription(vpn_username: str):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE payg_subscriptions SET status = 'cancelled' WHERE vpn_username = ?", (vpn_username,))
+    conn.commit()
+    conn.close()
+
+def record_refund_transaction(user_id: int, amount: int, description: str = "refund"):
+    conn = get_connection()
+    c = conn.cursor()
+    order_id = f"REF-{int(datetime.datetime.now().timestamp())}-{user_id}"
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute("""
+    INSERT INTO transactions (order_id, user_id, amount, payment_method, status, created_at, completed_at)
+    VALUES (?, ?, ?, ?, 'completed', ?, ?)
+    """, (order_id, user_id, amount, description, now, now))
+    conn.commit()
+    conn.close()
+    return order_id
 
 def delete_vpn_account_by_username(vpn_username: str):
     conn = get_connection()

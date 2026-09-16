@@ -484,6 +484,18 @@ def delete_account(protocol: str, username: str) -> bool:
 
     remove_xray_config(protocol, username)
 
+    # Clean db entries if exists
+    db_file = f"/etc/{protocol}/.{protocol}.db"
+    if os.path.exists(db_file):
+        try:
+            with open(db_file, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+            new_lines = [l for l in lines if not re.search(rf'^(?:###|#&|#!|#@&)\s+{re.escape(username)}\s+', l)]
+            with open(db_file, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+        except Exception:
+            pass
+
     # Clean files
     for base in [f"/etc/{protocol}", f"/etc/limit/{protocol}/ip"]:
         fpath = os.path.join(base, username)
