@@ -268,10 +268,14 @@
         "outboundTag": "blocked",
         "domain": [
           "geosite:category-ads-all",
-          "geosite:malware",
           "torrent",
           "tracker",
-          "geosite:torrent"
+          "thepiratebay",
+          "1337x",
+          "rarbg",
+          "yts",
+          "nyaa",
+          "torrentz"
         ]
       },
       {
