@@ -83,5 +83,10 @@ echo -e "${BIWhite}────────────────────�
 echo -e "${green}      UPDATE SCRIPT SELESAI DENGAN SUKSES!${NC}"
 echo -e "${BIWhite}──────────────────────────────────────────${NC}"
 echo ""
-read -n 1 -s -r -p "Tekan [ Enter ] untuk kembali ke menu..."
-menu
+if [ -t 0 ]; then
+    read -n 1 -s -r -p "Tekan [ Enter ] untuk kembali ke menu..."
+    echo ""
+    menu 2>/dev/null || true
+else
+    echo -e "${green}Update selesai! Ketik '${CYAN}menu${green}' untuk membuka menu utama VPS.${NC}"
+fi
