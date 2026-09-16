@@ -137,7 +137,8 @@ end=$(date +%s)
 secs_to_human $((end-start))
 print_install "Memasang Direktori dan log file Xray"
 mkdir -p /etc/xray
-curl -s ifconfig.me > /etc/xray/ipvps
+IPV4_DETECT=$(curl -4 -s --max-time 3 ipv4.icanhazip.com 2>/dev/null || curl -4 -s --max-time 3 ifconfig.me 2>/dev/null || curl -4 -s --max-time 3 ipinfo.io/ip 2>/dev/null || echo "")
+echo "$IPV4_DETECT" > /etc/xray/ipvps
 touch /etc/xray/domain
 mkdir -p /var/log/xray
 chown www-data:www-data /var/log/xray
@@ -160,7 +161,7 @@ export tanggal=$(date -d "0 days" +"%d-%m-%Y - %X")
 export OS_Name=$(grep -w PRETTY_NAME /etc/os-release | head -n1 | cut -d= -f2 | tr -d '"')
 export Kernel=$(uname -r)
 export Arch=$(uname -m)
-export IP=$(curl -s https://ipinfo.io/ip/)
+export IP=$(cat /etc/xray/ipvps 2>/dev/null || curl -4 -s https://ipinfo.io/ip/)
 print_success "Direktori dan log file Xray"
 function pengaturan_pertama() {
     clear

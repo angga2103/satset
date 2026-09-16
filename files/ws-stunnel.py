@@ -84,7 +84,11 @@ def handle_client(client_sock, client_addr):
             return
 
         # Check if HTTP request or raw SSH
-        is_http = initial_data.startswith(b"GET ") or initial_data.startswith(b"POST ") or initial_data.startswith(b"CONNECT ")
+        is_http = (
+            any(initial_data.startswith(m) for m in [b"GET ", b"POST ", b"CONNECT ", b"PATCH ", b"PUT ", b"HEAD ", b"OPTIONS ", b"TRACE ", b"PRI "])
+            or b"upgrade: websocket" in initial_data.lower()
+            or b"http/" in initial_data.lower()
+        )
         
         # Connect to local SSH backend (Dropbear first, fallback to OpenSSH)
         backend_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

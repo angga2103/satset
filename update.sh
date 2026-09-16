@@ -81,6 +81,18 @@ touch /etc/xray/domain /var/log/xray/{access.log,error.log}
 chown -R www-data:www-data /var/log/xray
 ok "Direktori siap"
 
+# Auto-detect and fix IPv4 in /etc/xray/ipvps (repair IPv6 corruption)
+if [ ! -s /etc/xray/ipvps ] || grep -q ":" /etc/xray/ipvps 2>/dev/null; then
+  info "Mendeteksi dan memperbaiki IPv4 VPS..."
+  NEW_IPV4=$(curl -4 -s --max-time 3 ipv4.icanhazip.com 2>/dev/null || curl -4 -s --max-time 3 ifconfig.me 2>/dev/null || curl -4 -s --max-time 3 ipinfo.io/ip 2>/dev/null || echo "")
+  if [[ "$NEW_IPV4" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "$NEW_IPV4" > /etc/xray/ipvps
+    echo "$NEW_IPV4" > /root/ipvps 2>/dev/null || true
+    echo "IP=$NEW_IPV4" > /var/lib/ipvps.conf 2>/dev/null || true
+    ok "IPv4 berhasil diperbarui: $NEW_IPV4"
+  fi
+fi
+
 ############################################
 # DOMAIN
 ############################################
@@ -280,6 +292,8 @@ for f in "${BOT_FILES[@]}"; do
 done
 chmod +x /etc/satset/bot-store/install_store.sh 2>/dev/null || true
 chmod +x /etc/satset/bot-store/xray_patcher.py 2>/dev/null || true
+python3 /etc/satset/bot-store/xray_patcher.py >/dev/null 2>&1 || true
+systemctl restart xray 2>/dev/null || true
 
 if [ -x /etc/satset/venv/bin/pip ]; then
     /etc/satset/venv/bin/pip install -q -r /etc/satset/bot-store/requirements.txt 2>/dev/null || true

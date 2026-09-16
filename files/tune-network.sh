@@ -81,23 +81,22 @@ apply_anti_ddos() {
     # 5. Limit concurrent connections per IP (Max 500 simultaneous connections per IP)
     iptables -A SATSET_DDOS -p tcp -m connlimit --connlimit-above 500 --connlimit-mask 32 -j DROP 2>/dev/null || true
 
-    # 6. Limit UDP flood (100/s burst 200)
-    iptables -A SATSET_DDOS -p udp -m limit --limit 100/s --limit-burst 200 -j RETURN 2>/dev/null || true
+    # 6. UDP rate limit (1000/s burst 2000 for gaming and DNS)
+    iptables -A SATSET_DDOS -p udp -m limit --limit 1000/s --limit-burst 2000 -j RETURN 2>/dev/null || true
 
-    # 7. Limit ICMP ping flood (2/s burst 5)
-    iptables -A SATSET_DDOS -p icmp -m limit --limit 2/s --limit-burst 5 -j RETURN 2>/dev/null || true
+    # 7. Limit ICMP ping flood (20/s burst 50)
+    iptables -A SATSET_DDOS -p icmp -m limit --limit 20/s --limit-burst 50 -j RETURN 2>/dev/null || true
     iptables -A SATSET_DDOS -p icmp -j DROP 2>/dev/null || true
 
     # Insert SATSET_DDOS at top of INPUT chain
     iptables -D INPUT -j SATSET_DDOS 2>/dev/null || true
     iptables -I INPUT 1 -j SATSET_DDOS 2>/dev/null || true
 
-    # 8. Anti-Torrent string inspection in FORWARD and OUTPUT chains
+    # Clean up any heavy packet string inspection rules (Xray routing handles torrents at L7)
     TORRENT_STRINGS=("BitTorrent" "BitTorrent protocol" "peer_id=" ".torrent" "announce.php?passkey=" "info_hash")
     for chain in FORWARD OUTPUT; do
         for s in "${TORRENT_STRINGS[@]}"; do
-            iptables -C "$chain" -m string --string "$s" --algo bm -j DROP 2>/dev/null || \
-            iptables -I "$chain" 1 -m string --string "$s" --algo bm -j DROP 2>/dev/null || true
+            while iptables -D "$chain" -m string --string "$s" --algo bm -j DROP 2>/dev/null; do :; done
         done
     done
 

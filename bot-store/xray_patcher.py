@@ -219,7 +219,7 @@ def generate_routing_and_dns_block(content: str) -> str:
     })
 
     routing = {
-        "domainStrategy": "IPIfNonMatch",
+        "domainStrategy": "AsIs",
         "rules": rules
     }
 
@@ -229,9 +229,9 @@ def generate_routing_and_dns_block(content: str) -> str:
             "cloudflare-dns.com": "1.1.1.1"
         },
         "servers": [
-            "https://1.1.1.1/dns-query",
             "8.8.8.8",
             "1.1.1.1",
+            "8.8.4.4",
             "localhost"
         ]
     }

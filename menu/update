@@ -115,9 +115,13 @@ fi
 
 # Cache data jaringan VPS untuk mempercepat transisi respon CLI menu
 mkdir -p /etc/xray
-if [ ! -s /etc/xray/ipvps ]; then
-    curr_ip=$(curl -s --max-time 2 ipv4.icanhazip.com 2>/dev/null || curl -s --max-time 2 ipinfo.io/ip 2>/dev/null || echo "")
-    [ -n "$curr_ip" ] && echo "$curr_ip" > /etc/xray/ipvps 2>/dev/null || true
+if [ ! -s /etc/xray/ipvps ] || grep -q ":" /etc/xray/ipvps 2>/dev/null; then
+    curr_ip=$(curl -4 -s --max-time 3 ipv4.icanhazip.com 2>/dev/null || curl -4 -s --max-time 3 ifconfig.me 2>/dev/null || curl -4 -s --max-time 3 ipinfo.io/ip 2>/dev/null || echo "")
+    if [[ "$curr_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "$curr_ip" > /etc/xray/ipvps 2>/dev/null || true
+        echo "$curr_ip" > /root/ipvps 2>/dev/null || true
+        echo "IP=$curr_ip" > /var/lib/ipvps.conf 2>/dev/null || true
+    fi
 fi
 if [ ! -s /etc/xray/isp ] || [ ! -s /etc/xray/city ]; then
     resp=$(curl -s --max-time 2 "http://ip-api.com/json/?fields=country,city,isp" 2>/dev/null || true)

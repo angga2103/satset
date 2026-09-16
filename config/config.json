@@ -240,20 +240,13 @@
     }
   ],
   "routing": {
-    "domainStrategy": "IPIfNonMatch",
+    "domainStrategy": "AsIs",
     "rules": [
       {
         "inboundTag": [
           "api"
         ],
         "outboundTag": "api",
-        "type": "field"
-      },
-      {
-        "inboundTag": [
-          "dnsIn"
-        ],
-        "outboundTag": "dnsOut",
         "type": "field"
       },
       {
@@ -298,9 +291,9 @@
       "cloudflare-dns.com": "1.1.1.1"
     },
     "servers": [
-      "https://1.1.1.1/dns-query",
       "8.8.8.8",
       "1.1.1.1",
+      "8.8.4.4",
       "localhost"
     ]
   }
