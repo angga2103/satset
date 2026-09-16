@@ -40,8 +40,59 @@ HTTP_200_OK = (
     b"OK"
 )
 
-def pipe_sockets(src, dst):
-    """Pipes traffic between client and backend target"""
+def pipe_client_to_backend(src, dst):
+    """Pipes traffic from client to Dropbear, stripping split/dummy HTTP payloads (e.g. HTTP/ 69)"""
+    ssh_started = False
+    buf = b""
+    try:
+        while True:
+            r, _, _ = select.select([src], [], [], 60)
+            if not r:
+                break
+            data = src.recv(BUFFER_SIZE)
+            if not data:
+                break
+
+            if not ssh_started:
+                buf += data
+                # Check if we have received real SSH client identification
+                if b"SSH-" in buf:
+                    ssh_started = True
+                    idx = buf.find(b"SSH-")
+                    # Discard any junk before SSH- (like HTTP/ 69\r\n\r\n) and send real SSH banner
+                    dst.sendall(buf[idx:])
+                    buf = b""
+                elif buf.startswith(b"HTTP/") or b"HTTP/" in buf or b"\r\n" in buf:
+                    # Still junk HTTP payload or dummy split packet, discard or buffer until SSH-
+                    if len(buf) > 8192:
+                        # Prevent unbounded buffering if client is not sending SSH-
+                        ssh_started = True
+                        dst.sendall(buf)
+                        buf = b""
+                    continue
+                else:
+                    # Non-HTTP data, forward directly
+                    ssh_started = True
+                    dst.sendall(buf)
+                    buf = b""
+            else:
+                dst.sendall(data)
+    except Exception:
+        pass
+    finally:
+        try:
+            src.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            dst.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        src.close()
+        dst.close()
+
+def pipe_backend_to_client(src, dst):
+    """Pipes traffic from Dropbear back to client"""
     try:
         while True:
             r, _, _ = select.select([src], [], [], 60)
@@ -115,13 +166,19 @@ def handle_client(client_sock, client_addr):
         if is_http:
             # Upgrade WebSocket handshake
             client_sock.sendall(WS_RESPONSE_101)
+            # If initial_data had trailing data after \r\n\r\n
+            if b"\r\n\r\n" in initial_data:
+                trailing = initial_data.split(b"\r\n\r\n", 1)[1]
+                if trailing and b"SSH-" in trailing:
+                    idx = trailing.find(b"SSH-")
+                    backend_sock.sendall(trailing[idx:])
         else:
             # If client sent raw data, forward it
             backend_sock.sendall(initial_data)
 
-        # Start two-way piping
-        t1 = threading.Thread(target=pipe_sockets, args=(client_sock, backend_sock), daemon=True)
-        t2 = threading.Thread(target=pipe_sockets, args=(backend_sock, client_sock), daemon=True)
+        # Start two-way piping with split payload filtering
+        t1 = threading.Thread(target=pipe_client_to_backend, args=(client_sock, backend_sock), daemon=True)
+        t2 = threading.Thread(target=pipe_backend_to_client, args=(backend_sock, client_sock), daemon=True)
         t1.start()
         t2.start()
 

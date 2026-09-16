@@ -141,6 +141,9 @@ if [ ! -s /etc/xray/isp ] || [ ! -s /etc/xray/city ]; then
 fi
 
 # Perbarui modul ws-stunnel (SSH WebSocket Tunnel)
+grep -qx "/bin/false" /etc/shells 2>/dev/null || echo "/bin/false" >> /etc/shells
+grep -qx "/usr/sbin/nologin" /etc/shells 2>/dev/null || echo "/usr/sbin/nologin" >> /etc/shells
+systemctl restart dropbear 2>/dev/null || true
 wget -q -O /usr/local/bin/ws-stunnel "${REPO}/files/ws-stunnel.py${CACHE_BUSTER}" 2>/dev/null || \
 curl -fsSL -o /usr/local/bin/ws-stunnel "${REPO}/files/ws-stunnel.py${CACHE_BUSTER}" 2>/dev/null || true
 chmod +x /usr/local/bin/ws-stunnel 2>/dev/null || true

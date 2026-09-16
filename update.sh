@@ -196,6 +196,8 @@ cat > /etc/issue.net <<'EOF'
 <font color="white"><b>- MAX 2 DEVICES / MULTILOGIN</b></font><br>
 <font color="blue"><b>================================</b></font>
 EOF
+grep -qx "/bin/false" /etc/shells 2>/dev/null || echo "/bin/false" >> /etc/shells
+grep -qx "/usr/sbin/nologin" /etc/shells 2>/dev/null || echo "/usr/sbin/nologin" >> /etc/shells
 systemctl enable dropbear >/dev/null 2>&1 || true
 systemctl restart dropbear >/dev/null 2>&1 || true
 
