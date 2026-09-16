@@ -201,11 +201,87 @@ print(config.get_rules_summary().replace('<b>','').replace('</b>','').replace('<
             echo " [0] Kembali"
             read -rp "Pilih opsi [0-5]: " r_opt
             case "$r_opt" in
-                1) read -rp "Limit IP baru: " nip; $PYTHON_BIN -c "import sys; sys.path.append('/etc/satset/bot-store'); import config; config.update_config_key('DEFAULT_IP_LIMIT', int('$nip')); print('Limit IP berhasil diubah!')" ;;
-                2) read -rp "Limit Kuota baru (GB, 0=unlimited): " nq; $PYTHON_BIN -c "import sys; sys.path.append('/etc/satset/bot-store'); import config; config.update_config_key('DEFAULT_QUOTA_GB', int('$nq')); print('Limit Kuota berhasil diubah!')" ;;
-                3) read -rp "Durasi suspen baru (menit): " ns; $PYTHON_BIN -c "import sys; sys.path.append('/etc/satset/bot-store'); import config; config.update_config_key('SUSPEND_DURATION_MINUTES', int('$ns')); print('Durasi suspen berhasil diubah!')" ;;
-                4) read -rp "Harga Bulanan baru (Rp): " npm; $PYTHON_BIN -c "import sys; sys.path.append('/etc/satset/bot-store'); import config; config.update_config_key('PRICE_MONTHLY', int('$npm')); print('Harga bulanan berhasil diubah!')" ;;
-                5) read -rp "Tarif PAYG Harian baru (Rp): " npp; $PYTHON_BIN -c "import sys; sys.path.append('/etc/satset/bot-store'); import config; config.update_config_key('PRICE_PAYG_DAILY', int('$npp')); print('Tarif PAYG berhasil diubah!')" ;;
+                1) 
+                    read -rp "Limit IP baru: " nip
+                    $PYTHON_BIN -c "
+import sys, re; sys.path.append('/etc/satset/bot-store'); import config
+m = re.search(r'\d+', '$nip')
+if m:
+    val = int(m.group())
+    config.update_config_key('DEFAULT_IP_LIMIT', val)
+    print(f'\n\033[0;32m✓ Limit IP default berhasil diubah menjadi {val} IP!\033[0m\n')
+    print(config.get_rules_summary().replace('<b>','').replace('</b>','').replace('<code>','').replace('</code>',''))
+else:
+    print('\033[0;31mNilai tidak valid. Masukkan angka.\033[0m')
+"
+                    systemctl restart satset-bot 2>/dev/null || true
+                    ;;
+                2) 
+                    read -rp "Limit Kuota baru (GB, 0=unlimited): " nq
+                    $PYTHON_BIN -c "
+import sys, re; sys.path.append('/etc/satset/bot-store'); import config
+if 'unlimited' in '$nq'.lower():
+    val = 0
+else:
+    m = re.search(r'\d+', '$nq')
+    val = int(m.group()) if m else -1
+if val >= 0:
+    config.update_config_key('DEFAULT_QUOTA_GB', val)
+    v_str = f'{val} GB' if val > 0 else 'Unlimited'
+    print(f'\n\033[0;32m✓ Limit Kuota default berhasil diubah menjadi {v_str}!\033[0m\n')
+    print(config.get_rules_summary().replace('<b>','').replace('</b>','').replace('<code>','').replace('</code>',''))
+else:
+    print('\033[0;31mNilai tidak valid. Masukkan angka atau unlimited.\033[0m')
+"
+                    systemctl restart satset-bot 2>/dev/null || true
+                    ;;
+                3) 
+                    read -rp "Durasi suspen baru (menit): " ns
+                    $PYTHON_BIN -c "
+import sys, re; sys.path.append('/etc/satset/bot-store'); import config
+m = re.search(r'\d+', '$ns')
+if m:
+    val = int(m.group())
+    config.update_config_key('SUSPEND_DURATION_MINUTES', val)
+    print(f'\n\033[0;32m✓ Durasi suspen berhasil diubah menjadi {val} Menit!\033[0m\n')
+    print(config.get_rules_summary().replace('<b>','').replace('</b>','').replace('<code>','').replace('</code>',''))
+else:
+    print('\033[0;31mNilai tidak valid. Masukkan angka.\033[0m')
+"
+                    systemctl restart satset-bot 2>/dev/null || true
+                    ;;
+                4) 
+                    read -rp "Harga Bulanan baru (Rp): " npm
+                    $PYTHON_BIN -c "
+import sys, re; sys.path.append('/etc/satset/bot-store'); import config
+clean = '$npm'.replace('.', '').replace(',', '')
+m = re.search(r'\d+', clean)
+if m:
+    val = int(m.group())
+    config.update_config_key('PRICE_MONTHLY', val)
+    print(f'\n\033[0;32m✓ Harga bulanan berhasil diubah menjadi Rp {val:,} / 30 Hari!\033[0m\n')
+    print(config.get_rules_summary().replace('<b>','').replace('</b>','').replace('<code>','').replace('</code>',''))
+else:
+    print('\033[0;31mNilai tidak valid. Masukkan angka.\033[0m')
+"
+                    systemctl restart satset-bot 2>/dev/null || true
+                    ;;
+                5) 
+                    read -rp "Tarif PAYG Harian baru (Rp): " npp
+                    $PYTHON_BIN -c "
+import sys, re; sys.path.append('/etc/satset/bot-store'); import config
+clean = '$npp'.replace('.', '').replace(',', '')
+m = re.search(r'\d+', clean)
+if m:
+    val = int(m.group())
+    config.update_config_key('PRICE_PAYG_DAILY', val)
+    print(f'\n\033[0;32m✓ Tarif PAYG harian berhasil diubah menjadi Rp {val:,} / Hari!\033[0m\n')
+    print(config.get_rules_summary().replace('<b>','').replace('</b>','').replace('<code>','').replace('</code>',''))
+else:
+    print('\033[0;31mNilai tidak valid. Masukkan angka.\033[0m')
+"
+                    systemctl restart satset-bot 2>/dev/null || true
+                    ;;
             esac
             read -rp "Tekan Enter untuk kembali..."
             ;;

@@ -29,7 +29,19 @@ def load_config():
     config = DEFAULT_CONFIG.copy()
     env_path = get_env_path()
     
-    # Load from file if exists
+    # 1. Fallback to OS environment if present
+    for k in config:
+        if k in os.environ:
+            val = os.environ[k]
+            if isinstance(config[k], int):
+                try:
+                    config[k] = int(val)
+                except ValueError:
+                    pass
+            else:
+                config[k] = val
+
+    # 2. Persisted file /etc/satset/bot.env takes HIGHEST precedence
     if os.path.exists(env_path):
         try:
             with open(env_path, "r", encoding="utf-8") as f:
@@ -49,34 +61,52 @@ def load_config():
                                     pass
                             else:
                                 config[k] = v
+                        else:
+                            config[k] = v
         except Exception as e:
             print(f"[WARN] Failed to read {env_path}: {e}")
 
-    # Override with OS environment variables if set
-    for k in config:
-        if k in os.environ:
-            val = os.environ[k]
-            if isinstance(config[k], int):
-                try:
-                    config[k] = int(val)
-                except ValueError:
-                    pass
-            else:
-                config[k] = val
-                
     return config
 
 def save_config(new_data: dict):
-    config = load_config()
-    config.update(new_data)
     env_path = get_env_path()
     os.makedirs(os.path.dirname(env_path), exist_ok=True)
     
-    with open(env_path, "w", encoding="utf-8") as f:
-        f.write("# SATSET Telegram Store Bot Configuration\n")
-        for k, v in config.items():
-            f.write(f"{k}={v}\n")
-    return config
+    # Update file in-place to preserve comments and layout
+    existing_lines = []
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                existing_lines = f.readlines()
+        except Exception as e:
+            print(f"[WARN] Failed to read existing {env_path}: {e}")
+
+    written_keys = set()
+    new_lines = []
+    for line in existing_lines:
+        sline = line.strip()
+        if sline and not sline.startswith("#") and "=" in sline:
+            k = sline.split("=", 1)[0].strip()
+            if k in new_data:
+                new_lines.append(f"{k}={new_data[k]}\n")
+                written_keys.add(k)
+                continue
+        new_lines.append(line)
+
+    for k, v in new_data.items():
+        if k not in written_keys:
+            new_lines.append(f"{k}={v}\n")
+            written_keys.add(k)
+        # Synchronize live process os.environ immediately
+        os.environ[k] = str(v)
+
+    try:
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+    except Exception as e:
+        print(f"[ERROR] Failed to write {env_path}: {e}")
+
+    return load_config()
 
 def update_config_key(key: str, val):
     """Update a specific configuration key and persist to env file"""

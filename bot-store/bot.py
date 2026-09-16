@@ -1,6 +1,7 @@
 import os
 import sys
 import io
+import re
 import time
 import uuid
 import datetime
@@ -1208,59 +1209,65 @@ def handle_text_inputs(message):
     # Custom rule IP
     elif action == "wait_custom_rule_ip":
         del user_states[user_id]
-        try:
-            val = int(text)
+        m = re.search(r'\d+', text)
+        if m:
+            val = int(m.group())
             update_config_key("DEFAULT_IP_LIMIT", val)
-            bot.send_message(user_id, f"✅ Limit IP default berhasil diset ke {val} IP.", reply_markup=main_menu_keyboard(user_id))
-        except ValueError:
-            bot.send_message(user_id, "Masukkan hanya angka.")
+            bot.send_message(user_id, f"✅ Limit IP default berhasil diset ke <b>{val} IP</b>.\n\n" + get_rules_summary(), reply_markup=main_menu_keyboard(user_id))
+        else:
+            bot.send_message(user_id, "Masukkan angka yang valid (contoh: 1 atau 2).")
 
     # Custom rule Quota
     elif action == "wait_custom_rule_quota":
         del user_states[user_id]
-        try:
-            val = int(text)
+        if "unlimited" in text.lower():
+            val = 0
+        else:
+            m = re.search(r'\d+', text)
+            val = int(m.group()) if m else -1
+            
+        if val >= 0:
             update_config_key("DEFAULT_QUOTA_GB", val)
             v_name = f"{val} GB" if val > 0 else "Unlimited"
-            bot.send_message(user_id, f"✅ Limit Kuota default berhasil diset ke {v_name}.", reply_markup=main_menu_keyboard(user_id))
-        except ValueError:
-            bot.send_message(user_id, "Masukkan hanya angka.")
+            bot.send_message(user_id, f"✅ Limit Kuota default berhasil diset ke <b>{v_name}</b>.\n\n" + get_rules_summary(), reply_markup=main_menu_keyboard(user_id))
+        else:
+            bot.send_message(user_id, "Masukkan angka kuota yang valid dalam GB (contoh: 350) atau ketik 'unlimited'.")
 
     # Custom rule Suspend
     elif action == "wait_custom_rule_suspend":
         del user_states[user_id]
-        try:
-            val = int(text)
+        m = re.search(r'\d+', text)
+        if m:
+            val = int(m.group())
             update_config_key("SUSPEND_DURATION_MINUTES", val)
-            bot.send_message(user_id, f"✅ Durasi suspen berhasil diset ke {val} Menit.", reply_markup=main_menu_keyboard(user_id))
-        except ValueError:
-            bot.send_message(user_id, "Masukkan hanya angka.")
+            bot.send_message(user_id, f"✅ Durasi suspen berhasil diset ke <b>{val} Menit</b>.\n\n" + get_rules_summary(), reply_markup=main_menu_keyboard(user_id))
+        else:
+            bot.send_message(user_id, "Masukkan angka menit yang valid (contoh: 10).")
 
     # Change monthly price
     elif action == "wait_price_monthly":
         del user_states[user_id]
-        try:
-            val = int(text)
+        clean_text = text.replace(".", "").replace(",", "")
+        m = re.search(r'\d+', clean_text)
+        if m:
+            val = int(m.group())
             update_config_key("PRICE_MONTHLY", val)
-            bot.send_message(user_id, f"✅ Harga paket bulanan berhasil diubah menjadi Rp {val:,} / 30 Hari.", reply_markup=main_menu_keyboard(user_id))
-        except ValueError:
-            bot.send_message(user_id, "Masukkan hanya angka.")
+            bot.send_message(user_id, f"✅ Harga paket bulanan berhasil diubah menjadi <b>Rp {val:,} / 30 Hari</b>.\n\n" + get_rules_summary(), reply_markup=main_menu_keyboard(user_id))
+        else:
+            bot.send_message(user_id, "Masukkan nominal harga yang valid (contoh: 8000).")
 
     # Change PAYG price
     elif action == "wait_price_payg":
         del user_states[user_id]
-        parts = text.split()
-        if len(parts) != 2:
-            bot.send_message(user_id, "Format salah. Masukkan: <code>tarif_harian tarif_10gb</code>")
-            return
-        try:
-            d_val = int(parts[0])
-            q_val = int(parts[1])
+        nums = [int(x) for x in re.findall(r'\d+', text.replace(".", "").replace(",", ""))]
+        if len(nums) >= 2:
+            d_val = nums[0]
+            q_val = nums[1]
             update_config_key("PRICE_PAYG_DAILY", d_val)
             update_config_key("PRICE_PAYG_10GB", q_val)
-            bot.send_message(user_id, f"✅ Tarif PAYG berhasil diperbarui:\n• Harian: Rp {d_val:,}\n• Kuota 10GB: Rp {q_val:,}", reply_markup=main_menu_keyboard(user_id))
-        except ValueError:
-            bot.send_message(user_id, "Semua tarif harus berupa angka.")
+            bot.send_message(user_id, f"✅ Tarif PAYG berhasil diperbarui:\n• Harian: Rp {d_val:,}\n• Kuota 10GB: Rp {q_val:,}\n\n" + get_rules_summary(), reply_markup=main_menu_keyboard(user_id))
+        else:
+            bot.send_message(user_id, "Format salah. Masukkan dua angka, contoh: <code>300 1000</code> (tarif harian tarif kuota 10gb)")
 
     # Search user
     elif action == "wait_search_vpn_user":
