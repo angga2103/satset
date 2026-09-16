@@ -65,6 +65,23 @@ if [ -x /etc/satset/venv/bin/pip ]; then
     /etc/satset/venv/bin/pip install -q -r /etc/satset/bot-store/requirements.txt 2>/dev/null || true
 fi
 
+# Pulihkan & Validasi Domain jika korup
+if [ -f /etc/xray/domain ]; then
+    CURR_DOMAIN=$(head -n1 /etc/xray/domain 2>/dev/null | tr -d ' \t\r\n' || true)
+    if [[ ! "$CURR_DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        echo -e "${y}• Mendeteksi format domain korup. Memulihkan dari sertifikat SSL...${NC}"
+        REC_DOMAIN=$(openssl x509 -in /etc/xray/xray.crt -noout -subject 2>/dev/null | grep -oP 'CN\s*=\s*\K[^\s,]+' | grep -v 'localhost' | head -n1 || true)
+        if [[ ! "$REC_DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]] && [ -d /root/.acme.sh ]; then
+            REC_DOMAIN=$(find /root/.acme.sh -maxdepth 1 -name "*.*" -type d 2>/dev/null | head -n1 | sed 's/.*\///; s/_ecc$//' || true)
+        fi
+        if [[ "$REC_DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+            echo "$REC_DOMAIN" > /etc/xray/domain
+            echo "$REC_DOMAIN" > /root/domain
+            echo -e "${green}✓ Domain berhasil dipulihkan: $REC_DOMAIN${NC}"
+        fi
+    fi
+fi
+
 # Terapkan Anti-Adblock & Anti-Torrent ke konfigurasi Xray yang ada
 if [ -f /etc/xray/config.json ]; then
     echo -e "${y}• Memperbarui aturan Anti-Adblock & Anti-Torrent Xray...${NC}"

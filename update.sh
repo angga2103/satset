@@ -84,8 +84,35 @@ ok "Direktori siap"
 ############################################
 # DOMAIN
 ############################################
-read -rp "Masukkan domain (FQDN): " DOMAIN
-[[ -n "$DOMAIN" ]] || die "Domain kosong"
+EXISTING_DOMAIN=""
+if [ -s /etc/xray/domain ]; then
+  EXISTING_DOMAIN=$(head -n1 /etc/xray/domain | tr -d ' \t\r\n')
+elif [ -s /root/domain ]; then
+  EXISTING_DOMAIN=$(head -n1 /root/domain | tr -d ' \t\r\n')
+fi
+
+if [[ "$EXISTING_DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+  DOMAIN="$EXISTING_DOMAIN"
+  ok "Menggunakan domain tersimpan: $DOMAIN"
+else
+  RECOVERED_DOMAIN=$(openssl x509 -in /etc/xray/xray.crt -noout -subject 2>/dev/null | grep -oP 'CN\s*=\s*\K[^\s,]+' | grep -v 'localhost' | head -n1 || true)
+  if [[ ! "$RECOVERED_DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]] && [ -d /root/.acme.sh ]; then
+    RECOVERED_DOMAIN=$(find /root/.acme.sh -maxdepth 1 -name "*.*" -type d 2>/dev/null | head -n1 | sed 's/.*\///; s/_ecc$//' || true)
+  fi
+
+  if [[ "$RECOVERED_DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+    DOMAIN="$RECOVERED_DOMAIN"
+    ok "Domain dipulihkan dari sertifikat SSL: $DOMAIN"
+  else
+    if [ -e /dev/tty ]; then
+      read -rp "Masukkan domain (FQDN): " DOMAIN < /dev/tty || true
+    else
+      DOMAIN="${1:-}"
+    fi
+    DOMAIN=$(echo "${DOMAIN:-}" | tr -d ' \t\r\n')
+    [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]] || die "Domain tidak valid: '$DOMAIN'"
+  fi
+fi
 echo "$DOMAIN" > /etc/xray/domain
 echo "$DOMAIN" > /root/domain
 ok "Domain diset: $DOMAIN"
