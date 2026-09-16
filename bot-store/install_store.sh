@@ -31,16 +31,31 @@ apt-get install -y python3 python3-pip python3-venv sqlite3 curl wget qrencode >
 echo -e "${YELLOW}[2/5] Menyiapkan direktori /etc/satset/bot-store...${NC}"
 mkdir -p /etc/satset/bot-store
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+REPO_RAW="https://raw.githubusercontent.com/angga2103/satset/main/bot-store"
 
-# Salin berkas Python ke /etc/satset/bot-store
-cp -f "${SCRIPT_DIR}/config.py" /etc/satset/bot-store/
-cp -f "${SCRIPT_DIR}/database.py" /etc/satset/bot-store/
-cp -f "${SCRIPT_DIR}/pakasir.py" /etc/satset/bot-store/
-cp -f "${SCRIPT_DIR}/xray_manager.py" /etc/satset/bot-store/
-cp -f "${SCRIPT_DIR}/payg_worker.py" /etc/satset/bot-store/
-cp -f "${SCRIPT_DIR}/bot.py" /etc/satset/bot-store/
-cp -f "${SCRIPT_DIR}/requirements.txt" /etc/satset/bot-store/
+BOT_FILES=(
+    "config.py"
+    "database.py"
+    "pakasir.py"
+    "xray_manager.py"
+    "payg_worker.py"
+    "bot.py"
+    "requirements.txt"
+    "satset-bot.service"
+    "install_store.sh"
+)
+
+# Salin dari direktori lokal jika ada, atau unduh dari repositori
+for file in "${BOT_FILES[@]}"; do
+    if [ -n "$SCRIPT_DIR" ] && [ "$SCRIPT_DIR" != "/etc/satset/bot-store" ] && [ -f "${SCRIPT_DIR}/${file}" ]; then
+        cp -f "${SCRIPT_DIR}/${file}" "/etc/satset/bot-store/${file}"
+    elif [ ! -f "/etc/satset/bot-store/${file}" ] || [ "$SCRIPT_DIR" = "/dev/fd" ] || [ "$SCRIPT_DIR" = "/dev" ] || [ -z "$SCRIPT_DIR" ]; then
+        wget -q -O "/etc/satset/bot-store/${file}" "${REPO_RAW}/${file}" 2>/dev/null || \
+        curl -fsSL -o "/etc/satset/bot-store/${file}" "${REPO_RAW}/${file}" 2>/dev/null || true
+    fi
+done
+chmod +x /etc/satset/bot-store/install_store.sh 2>/dev/null || true
 
 # 3. Buat Python Virtual Environment (PEP 668 safe)
 echo -e "${YELLOW}[3/5] Menyiapkan Virtual Environment Python...${NC}"
@@ -55,12 +70,22 @@ ENV_FILE="/etc/satset/bot.env"
 if [ ! -f "$ENV_FILE" ]; then
     echo -e "${YELLOW}[4/5] Konfigurasi Pengaturan Bot Telegram & Pakasir:${NC}"
     echo ""
-    read -rp "Masukkan BOT_TOKEN dari @BotFather: " input_token
-    read -rp "Masukkan ADMIN_ID (Telegram User ID): " input_admin
-    read -rp "Masukkan PAKASIR_PROJECT_SLUG: " input_slug
-    read -rp "Masukkan PAKASIR_API_KEY: " input_key
-    read -rp "Harga Paket Bulanan (Default: 8000): " input_monthly
-    read -rp "Harga PAYG Harian (Default: 300): " input_payg
+    prompt_read() {
+        local msg="$1"
+        local var_name="$2"
+        if [ -e /dev/tty ] && [ ! -t 0 ]; then
+            read -rp "$msg" "$var_name" </dev/tty
+        else
+            read -rp "$msg" "$var_name"
+        fi
+    }
+
+    prompt_read "Masukkan BOT_TOKEN dari @BotFather: " input_token
+    prompt_read "Masukkan ADMIN_ID (Telegram User ID): " input_admin
+    prompt_read "Masukkan PAKASIR_PROJECT_SLUG: " input_slug
+    prompt_read "Masukkan PAKASIR_API_KEY: " input_key
+    prompt_read "Harga Paket Bulanan (Default: 8000): " input_monthly
+    prompt_read "Harga PAYG Harian (Default: 300): " input_payg
 
     input_monthly=${input_monthly:-8000}
     input_payg=${input_payg:-300}
@@ -85,7 +110,14 @@ fi
 
 # 5. Pasang Systemd Service
 echo -e "${YELLOW}[5/5] Mengaktifkan satset-bot.service...${NC}"
-cp -f "${SCRIPT_DIR}/satset-bot.service" /etc/systemd/system/satset-bot.service
+if [ -f "/etc/satset/bot-store/satset-bot.service" ]; then
+    cp -f /etc/satset/bot-store/satset-bot.service /etc/systemd/system/satset-bot.service
+elif [ -n "$SCRIPT_DIR" ] && [ -f "${SCRIPT_DIR}/satset-bot.service" ]; then
+    cp -f "${SCRIPT_DIR}/satset-bot.service" /etc/systemd/system/satset-bot.service
+else
+    wget -q -O /etc/systemd/system/satset-bot.service "${REPO_RAW}/satset-bot.service" 2>/dev/null || \
+    curl -fsSL -o /etc/systemd/system/satset-bot.service "${REPO_RAW}/satset-bot.service" 2>/dev/null || true
+fi
 systemctl daemon-reload
 systemctl enable satset-bot.service >/dev/null 2>&1
 systemctl restart satset-bot.service
@@ -105,7 +137,7 @@ while true; do
     echo -e "${GREEN}        SATSET TELEGRAM STORE & PAYG MANAGER        ${NC}"
     echo -e "${BLUE}====================================================${NC}"
     STATUS=$(systemctl is-active satset-bot 2>/dev/null || echo "inactive")
-    if [ "$STATUS" == "active" ]; then
+    if [ "$STATUS" = "active" ]; then
         echo -e "Status Bot Service : ${GREEN}ACTIVE (Running)${NC}"
     else
         echo -e "Status Bot Service : ${RED}INACTIVE / STOPPED${NC}"
