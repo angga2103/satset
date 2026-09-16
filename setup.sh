@@ -527,6 +527,9 @@ EOF
   sysctl -p /etc/sysctl.d/99-network-tune.conf
 
   echo -e "${YELLOW} Memeriksa dan mengaktifkan BBR congestion control...${NC}"
+  modprobe tcp_bbr 2>/dev/null || true
+  mkdir -p /etc/modules-load.d
+  echo "tcp_bbr" > /etc/modules-load.d/bbr.conf 2>/dev/null || true
   if grep -q "bbr" /proc/sys/net/ipv4/tcp_available_congestion_control; then
       echo "net.core.default_qdisc=fq" >> /etc/sysctl.d/99-network-tune.conf
       echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.d/99-network-tune.conf
@@ -535,6 +538,10 @@ EOF
   else
       echo -e "${RED} BBR tidak tersedia pada kernel ini${NC}"
   fi
+  wget -q -O /usr/local/sbin/tune-network "${REPO}files/tune-network.sh" >/dev/null 2>&1 || true
+  chmod +x /usr/local/sbin/tune-network 2>/dev/null || true
+  ln -sf /usr/local/sbin/tune-network /usr/local/sbin/bbr 2>/dev/null || true
+  /usr/local/sbin/tune-network apply >/dev/null 2>&1 || true
 
   echo -e "${YELLOW} Mengoptimasi network interfaces...${NC}"
   for interface in $(ip -o -4 addr show | awk '{print $2}' | grep -v "lo" | cut -d/ -f1); do

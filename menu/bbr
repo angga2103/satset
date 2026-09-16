@@ -1,0 +1,10 @@
+#!/bin/bash
+# Shortcut to tune-network status / control
+if [ -f /usr/local/sbin/tune-network ]; then
+    /usr/local/sbin/tune-network "${1:-status}"
+elif [ -f /etc/satset/tune-network.sh ]; then
+    /etc/satset/tune-network.sh "${1:-status}"
+else
+    echo "Modul tune-network belum terpasang. Jalankan 'update' terlebih dahulu."
+fi
+read -rp "Tekan Enter untuk kembali ke menu..."

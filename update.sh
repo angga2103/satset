@@ -119,6 +119,9 @@ chown www-data:www-data /run/xray
 bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" \
   @ install -u www-data --version "$XRAY_VERSION"
 wget -q -O /etc/xray/config.json "$REPO_RAW/config/config.json"
+mkdir -p /usr/local/share/xray
+wget -q -O /usr/local/share/xray/geosite.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat" 2>/dev/null || true
+wget -q -O /usr/local/share/xray/geoip.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat" 2>/dev/null || true
 ok "Xray OK"
 
 ############################################
@@ -233,16 +236,26 @@ chmod +x /usr/local/sbin/bot-store 2>/dev/null || true
 
 mkdir -p /etc/satset/bot-store
 CACHE_BUSTER="?v=$(date +%s)"
-BOT_FILES=(config.py database.py pakasir.py xray_manager.py payg_worker.py bot.py requirements.txt satset-bot.service install_store.sh)
+BOT_FILES=(config.py database.py pakasir.py xray_manager.py payg_worker.py bot.py requirements.txt satset-bot.service install_store.sh xray_patcher.py)
 for f in "${BOT_FILES[@]}"; do
     wget -q -O "/etc/satset/bot-store/$f" "$REPO_RAW/bot-store/$f${CACHE_BUSTER}" 2>/dev/null || \
     curl -fsSL -o "/etc/satset/bot-store/$f" "$REPO_RAW/bot-store/$f${CACHE_BUSTER}" 2>/dev/null || true
 done
 chmod +x /etc/satset/bot-store/install_store.sh 2>/dev/null || true
+chmod +x /etc/satset/bot-store/xray_patcher.py 2>/dev/null || true
 
 if [ -x /etc/satset/venv/bin/pip ]; then
     /etc/satset/venv/bin/pip install -q -r /etc/satset/bot-store/requirements.txt 2>/dev/null || true
 fi
+
+# Terapkan TCP BBR Speed Booster & Firewall Anti-DDoS
+mkdir -p /etc/satset
+wget -q -O /usr/local/sbin/tune-network "$REPO_RAW/files/tune-network.sh${CACHE_BUSTER}" 2>/dev/null || \
+curl -fsSL -o /usr/local/sbin/tune-network "$REPO_RAW/files/tune-network.sh${CACHE_BUSTER}" 2>/dev/null || true
+chmod +x /usr/local/sbin/tune-network 2>/dev/null || true
+cp -f /usr/local/sbin/tune-network /etc/satset/tune-network.sh 2>/dev/null || true
+ln -sf /usr/local/sbin/tune-network /usr/local/sbin/bbr 2>/dev/null || true
+/usr/local/sbin/tune-network apply >/dev/null 2>&1 || true
 
 if systemctl is-active --quiet satset-bot 2>/dev/null; then
     systemctl restart satset-bot 2>/dev/null || true

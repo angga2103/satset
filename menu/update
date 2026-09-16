@@ -51,19 +51,41 @@ BOT_FILES=(
     "requirements.txt"
     "satset-bot.service"
     "install_store.sh"
+    "xray_patcher.py"
 )
 for f in "${BOT_FILES[@]}"; do
     wget -q -O "/etc/satset/bot-store/$f" "${REPO}/bot-store/$f${CACHE_BUSTER}" 2>/dev/null || \
     curl -fsSL -o "/etc/satset/bot-store/$f" "${REPO}/bot-store/$f${CACHE_BUSTER}" 2>/dev/null || true
 done
 chmod +x /etc/satset/bot-store/install_store.sh 2>/dev/null || true
+chmod +x /etc/satset/bot-store/xray_patcher.py 2>/dev/null || true
 
 # Update python dependencies jika venv tersedia
 if [ -x /etc/satset/venv/bin/pip ]; then
     /etc/satset/venv/bin/pip install -q -r /etc/satset/bot-store/requirements.txt 2>/dev/null || true
 fi
 
-echo -e "${green}✓ Berkas Bot Store berhasil diperbarui.${NC}"
+# Terapkan Anti-Adblock & Anti-Torrent ke konfigurasi Xray yang ada
+if [ -f /etc/xray/config.json ]; then
+    echo -e "${y}• Memperbarui aturan Anti-Adblock & Anti-Torrent Xray...${NC}"
+    if [ -x /etc/satset/venv/bin/python3 ]; then
+        /etc/satset/venv/bin/python3 /etc/satset/bot-store/xray_patcher.py /etc/xray/config.json 2>/dev/null || true
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 /etc/satset/bot-store/xray_patcher.py /etc/xray/config.json 2>/dev/null || true
+    fi
+fi
+
+# Pasang & Terapkan TCP BBR Speed Booster & Proteksi Anti-DDoS
+echo -e "${y}• Memasang kernel tune TCP BBR & Firewall Anti-DDoS...${NC}"
+mkdir -p /etc/satset
+wget -q -O /usr/local/sbin/tune-network "${REPO}/files/tune-network.sh${CACHE_BUSTER}" 2>/dev/null || \
+curl -fsSL -o /usr/local/sbin/tune-network "${REPO}/files/tune-network.sh${CACHE_BUSTER}" 2>/dev/null || true
+chmod +x /usr/local/sbin/tune-network 2>/dev/null || true
+cp -f /usr/local/sbin/tune-network /etc/satset/tune-network.sh 2>/dev/null || true
+ln -sf /usr/local/sbin/tune-network /usr/local/sbin/bbr 2>/dev/null || true
+/usr/local/sbin/tune-network apply >/dev/null 2>&1 || true
+
+echo -e "${green}✓ Berkas Bot Store & Optimasi Jaringan berhasil diperbarui.${NC}"
 
 echo -e "${y}[3/3] Memeriksa status service bot...${NC}"
 if systemctl is-active --quiet satset-bot 2>/dev/null; then
