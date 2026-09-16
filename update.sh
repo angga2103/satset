@@ -216,21 +216,24 @@ ok "CrowdSec OK"
 # MENU REPO
 ############################################
 info "Install menu"
-wget -q "$REPO_RAW/menu/menu.zip"
-unzip -q menu.zip
-chmod +x menu/*
-mv menu/* /usr/local/sbin/
-rm -rf menu menu.zip
+TMP_DIR=$(mktemp -d)
+wget -q -O "${TMP_DIR}/menu.zip" "$REPO_RAW/menu/menu.zip?v=$(date +%s)" 2>/dev/null || \
+curl -fsSL -o "${TMP_DIR}/menu.zip" "$REPO_RAW/menu/menu.zip?v=$(date +%s)" 2>/dev/null || true
+if [ -f "${TMP_DIR}/menu.zip" ]; then
+    unzip -o -q "${TMP_DIR}/menu.zip" -d "${TMP_DIR}"
+    if [ -d "${TMP_DIR}/menu" ]; then
+        chmod +x "${TMP_DIR}/menu"/*
+        mv -f "${TMP_DIR}/menu"/* /usr/local/sbin/
+    fi
+fi
+rm -rf "${TMP_DIR}"
 mkdir -p /etc/satset/bot-store
-wget -q -O /etc/satset/bot-store/config.py "$REPO_RAW/bot-store/config.py" || true
-wget -q -O /etc/satset/bot-store/database.py "$REPO_RAW/bot-store/database.py" || true
-wget -q -O /etc/satset/bot-store/pakasir.py "$REPO_RAW/bot-store/pakasir.py" || true
-wget -q -O /etc/satset/bot-store/xray_manager.py "$REPO_RAW/bot-store/xray_manager.py" || true
-wget -q -O /etc/satset/bot-store/payg_worker.py "$REPO_RAW/bot-store/payg_worker.py" || true
-wget -q -O /etc/satset/bot-store/bot.py "$REPO_RAW/bot-store/bot.py" || true
-wget -q -O /etc/satset/bot-store/requirements.txt "$REPO_RAW/bot-store/requirements.txt" || true
-wget -q -O /etc/satset/bot-store/satset-bot.service "$REPO_RAW/bot-store/satset-bot.service" || true
-wget -q -O /etc/satset/bot-store/install_store.sh "$REPO_RAW/bot-store/install_store.sh" || true
+CACHE_BUSTER="?v=$(date +%s)"
+BOT_FILES=(config.py database.py pakasir.py xray_manager.py payg_worker.py bot.py requirements.txt satset-bot.service install_store.sh)
+for f in "${BOT_FILES[@]}"; do
+    wget -q -O "/etc/satset/bot-store/$f" "$REPO_RAW/bot-store/$f${CACHE_BUSTER}" 2>/dev/null || \
+    curl -fsSL -o "/etc/satset/bot-store/$f" "$REPO_RAW/bot-store/$f${CACHE_BUSTER}" 2>/dev/null || true
+done
 chmod +x /etc/satset/bot-store/install_store.sh 2>/dev/null || true
 ok "Menu & Bot Store OK"
 

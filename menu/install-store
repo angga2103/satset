@@ -1,0 +1,10 @@
+#!/bin/bash
+REPO="https://raw.githubusercontent.com/angga2103/satset/main"
+CACHE_BUSTER="?v=$(date +%s)"
+
+mkdir -p /etc/satset/bot-store
+wget -q -O /etc/satset/bot-store/install_store.sh "${REPO}/bot-store/install_store.sh${CACHE_BUSTER}" 2>/dev/null || \
+curl -fsSL -o /etc/satset/bot-store/install_store.sh "${REPO}/bot-store/install_store.sh${CACHE_BUSTER}" 2>/dev/null || true
+chmod +x /etc/satset/bot-store/install_store.sh 2>/dev/null || true
+
+bash /etc/satset/bot-store/install_store.sh

@@ -34,6 +34,7 @@ mkdir -p "$TARGET_DIR"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
 REPO_RAW="https://raw.githubusercontent.com/angga2103/satset/main/bot-store"
+CACHE_BUSTER="?v=$(date +%s)"
 
 BOT_FILES=(
     "config.py"
@@ -52,8 +53,8 @@ for file in "${BOT_FILES[@]}"; do
     if [ -n "$SCRIPT_DIR" ] && [ "$SCRIPT_DIR" != "$TARGET_DIR" ] && [ -f "${SCRIPT_DIR}/${file}" ]; then
         cp -f "${SCRIPT_DIR}/${file}" "${TARGET_DIR}/${file}"
     elif [ ! -f "${TARGET_DIR}/${file}" ] || [ "$SCRIPT_DIR" = "$TARGET_DIR" ] || [ "$SCRIPT_DIR" = "/dev/fd" ] || [ "$SCRIPT_DIR" = "/dev" ] || [ -z "$SCRIPT_DIR" ]; then
-        wget -q -O "${TARGET_DIR}/${file}" "${REPO_RAW}/${file}" 2>/dev/null || \
-        curl -fsSL -o "${TARGET_DIR}/${file}" "${REPO_RAW}/${file}" 2>/dev/null || true
+        wget -q -O "${TARGET_DIR}/${file}" "${REPO_RAW}/${file}${CACHE_BUSTER}" 2>/dev/null || \
+        curl -fsSL -o "${TARGET_DIR}/${file}" "${REPO_RAW}/${file}${CACHE_BUSTER}" 2>/dev/null || true
     fi
 done
 chmod +x "${TARGET_DIR}/install_store.sh" 2>/dev/null || true
@@ -116,8 +117,8 @@ if [ -f "/etc/satset/bot-store/satset-bot.service" ]; then
 elif [ -n "$SCRIPT_DIR" ] && [ -f "${SCRIPT_DIR}/satset-bot.service" ]; then
     cp -f "${SCRIPT_DIR}/satset-bot.service" /etc/systemd/system/satset-bot.service
 else
-    wget -q -O /etc/systemd/system/satset-bot.service "${REPO_RAW}/satset-bot.service" 2>/dev/null || \
-    curl -fsSL -o /etc/systemd/system/satset-bot.service "${REPO_RAW}/satset-bot.service" 2>/dev/null || true
+    wget -q -O /etc/systemd/system/satset-bot.service "${REPO_RAW}/satset-bot.service${CACHE_BUSTER}" 2>/dev/null || \
+    curl -fsSL -o /etc/systemd/system/satset-bot.service "${REPO_RAW}/satset-bot.service${CACHE_BUSTER}" 2>/dev/null || true
 fi
 systemctl daemon-reload
 systemctl enable satset-bot.service >/dev/null 2>&1

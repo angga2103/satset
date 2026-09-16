@@ -1,0 +1,71 @@
+#!/bin/bash
+clear
+y='\033[1;33m'
+BGX="\033[42m"
+CYAN="\033[96m"
+Putih="\033[97m"
+RED='\033[0;31m'
+NC='\033[0m'
+green='\033[0;32m'
+Lime='\e[38;5;155m'
+BIWhite='\033[1;97m'
+bggreen='\e[42;97;1m'
+
+echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+echo -e "${bggreen}             UPDATE SCRIPT                ${NC}"
+echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+echo ""
+
+REPO="https://raw.githubusercontent.com/angga2103/satset/main"
+CACHE_BUSTER="?v=$(date +%s)"
+
+echo -e "${y}[1/3] Mengunduh & memperbarui CLI menu...${NC}"
+TMP_DIR=$(mktemp -d)
+wget -q -O "${TMP_DIR}/menu.zip" "${REPO}/menu/menu.zip${CACHE_BUSTER}" 2>/dev/null || \
+curl -fsSL -o "${TMP_DIR}/menu.zip" "${REPO}/menu/menu.zip${CACHE_BUSTER}" 2>/dev/null || true
+
+if [ -f "${TMP_DIR}/menu.zip" ]; then
+    unzip -o -q "${TMP_DIR}/menu.zip" -d "${TMP_DIR}"
+    if [ -d "${TMP_DIR}/menu" ]; then
+        chmod +x "${TMP_DIR}/menu"/*
+        mv -f "${TMP_DIR}/menu"/* /usr/local/sbin/
+        echo -e "${green}✓ CLI menu berhasil diperbarui.${NC}"
+    fi
+fi
+rm -rf "${TMP_DIR}"
+
+echo -e "${y}[2/3] Memperbarui modul Bot Store & PAYG...${NC}"
+mkdir -p /etc/satset/bot-store
+BOT_FILES=(
+    "config.py"
+    "database.py"
+    "pakasir.py"
+    "xray_manager.py"
+    "payg_worker.py"
+    "bot.py"
+    "requirements.txt"
+    "satset-bot.service"
+    "install_store.sh"
+)
+for f in "${BOT_FILES[@]}"; do
+    wget -q -O "/etc/satset/bot-store/$f" "${REPO}/bot-store/$f${CACHE_BUSTER}" 2>/dev/null || \
+    curl -fsSL -o "/etc/satset/bot-store/$f" "${REPO}/bot-store/$f${CACHE_BUSTER}" 2>/dev/null || true
+done
+chmod +x /etc/satset/bot-store/install_store.sh 2>/dev/null || true
+echo -e "${green}✓ Berkas Bot Store berhasil diperbarui.${NC}"
+
+echo -e "${y}[3/3] Memeriksa status service bot...${NC}"
+if systemctl is-active --quiet satset-bot 2>/dev/null; then
+    systemctl restart satset-bot 2>/dev/null || true
+    echo -e "${green}✓ Service satset-bot berhasil direstart.${NC}"
+else
+    echo -e "${CYAN}• Service satset-bot dalam status non-aktif (siap di-install).${NC}"
+fi
+
+echo ""
+echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+echo -e "${green}      UPDATE SCRIPT SELESAI DENGAN SUKSES!${NC}"
+echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+echo ""
+read -n 1 -s -r -p "Tekan [ Enter ] untuk kembali ke menu..."
+menu
