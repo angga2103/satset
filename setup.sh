@@ -427,7 +427,7 @@ EOF
     print_install "Memasang BadVPN UDPGW (Gaming Port 7100, 7200, 7300)"
     wget -q -O /tmp/install-badvpn.sh "${REPO}files/install-badvpn.sh" || true
     chmod +x /tmp/install-badvpn.sh 2>/dev/null || true
-    bash /tmp/install-badvpn.sh >/dev/null 2>&1 || true
+    bash /tmp/install-badvpn.sh || true
     rm -f /tmp/install-badvpn.sh
     print_success "BadVPN UDPGW Gaming (7100, 7200, 7300)"
 

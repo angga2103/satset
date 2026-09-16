@@ -1,52 +1,104 @@
 #!/bin/bash
 # BadVPN UDPGW Manager & Status
-clear
+
 green='\033[0;32m'
 yellow='\033[1;33m'
 red='\033[0;31m'
 cyan='\033[0;36m'
 nc='\033[0m'
 bold='\033[1m'
-
-echo -e "${cyan}==========================================${nc}"
-echo -e "${bold}       BADVPN UDPGW STATUS & MANAGER      ${nc}"
-echo -e "${cyan}==========================================${nc}"
-echo -e "Port Gaming / VoIP SSH : 7100, 7200, 7300"
-echo ""
-
 PORTS=(7100 7200 7300)
-for port in "${PORTS[@]}"; do
-    if systemctl is-active --quiet "badvpn-udpgw@${port}" 2>/dev/null; then
-        echo -e "Port ${port} : ${green}RUNNING (Active)${nc}"
-    else
-        echo -e "Port ${port} : ${red}STOPPED (Inactive)${nc}"
-    fi
-done
 
-echo ""
-echo -e "${cyan}==========================================${nc}"
-echo -e " [1] Restart Service BadVPN"
-echo -e " [2] Start Service BadVPN"
-echo -e " [3] Stop Service BadVPN"
-echo -e " [0] Kembali ke Menu"
-echo -e "${cyan}==========================================${nc}"
-read -rp "Pilih opsi [0-3]: " opt
-case $opt in
-    1)
-        for p in "${PORTS[@]}"; do systemctl restart "badvpn-udpgw@$p" 2>/dev/null || true; done
-        echo -e "${green}Service BadVPN berhasil direstart.${nc}"
-        sleep 1
-        ;;
-    2)
-        for p in "${PORTS[@]}"; do systemctl enable --now "badvpn-udpgw@$p" 2>/dev/null || true; done
-        echo -e "${green}Service BadVPN berhasil dinyalakan.${nc}"
-        sleep 1
-        ;;
-    3)
-        for p in "${PORTS[@]}"; do systemctl stop "badvpn-udpgw@$p" 2>/dev/null || true; done
-        echo -e "${yellow}Service BadVPN dimatikan.${nc}"
-        sleep 1
-        ;;
-    *)
-        ;;
-esac
+check_binary() {
+    if command -v badvpn-udpgw >/dev/null 2>&1; then
+        if badvpn-udpgw --version >/dev/null 2>&1 || badvpn-udpgw --help >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    if [ -x /usr/local/bin/badvpn-udpgw ]; then
+        if /usr/local/bin/badvpn-udpgw --version >/dev/null 2>&1 || /usr/local/bin/badvpn-udpgw --help >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+while true; do
+    clear
+    echo -e "${cyan}==========================================${nc}"
+    echo -e "${bold}       BADVPN UDPGW STATUS & MANAGER      ${nc}"
+    echo -e "${cyan}==========================================${nc}"
+    echo -e "Port Gaming / VoIP SSH : 7100, 7200, 7300"
+    
+    if check_binary; then
+        echo -e "Binary Engine          : ${green}INSTALLED (OK)${nc}"
+    else
+        echo -e "Binary Engine          : ${red}ERROR / RUSAK (Pilih 4 untuk Fix)${nc}"
+    fi
+    echo ""
+
+    for port in "${PORTS[@]}"; do
+        if systemctl is-active --quiet "badvpn-udpgw@${port}" 2>/dev/null; then
+            echo -e "Port ${port} : ${green}RUNNING (Active)${nc}"
+        else
+            echo -e "Port ${port} : ${red}STOPPED (Inactive)${nc}"
+        fi
+    done
+
+    echo ""
+    echo -e "${cyan}==========================================${nc}"
+    echo -e " [1] Restart Service BadVPN"
+    echo -e " [2] Start Service BadVPN"
+    echo -e " [3] Stop Service BadVPN"
+    echo -e " [4] Install / Fix BadVPN UDPGW"
+    echo -e " [0] Kembali ke Menu SSH"
+    echo -e "${cyan}==========================================${nc}"
+    read -rp "Pilih opsi [0-4]: " opt
+    case "$opt" in
+        1)
+            if ! check_binary; then
+                echo -e "${yellow}Binary badvpn belum valid. Menjalankan auto-install...${nc}"
+                bash -c "$(curl -fsSL https://raw.githubusercontent.com/angga2103/satset/main/files/install-badvpn.sh 2>/dev/null || cat /etc/satset/install-badvpn.sh 2>/dev/null)" || true
+            fi
+            echo -e "${cyan}Merestart service BadVPN...${nc}"
+            for p in "${PORTS[@]}"; do
+                systemctl unmask "badvpn-udpgw@$p" 2>/dev/null || true
+                systemctl restart "badvpn-udpgw@$p" 2>/dev/null || true
+            done
+            sleep 1.5
+            ;;
+        2)
+            if ! check_binary; then
+                echo -e "${yellow}Binary badvpn belum valid. Menjalankan auto-install...${nc}"
+                bash -c "$(curl -fsSL https://raw.githubusercontent.com/angga2103/satset/main/files/install-badvpn.sh 2>/dev/null || cat /etc/satset/install-badvpn.sh 2>/dev/null)" || true
+            fi
+            echo -e "${cyan}Menyalakan service BadVPN...${nc}"
+            for p in "${PORTS[@]}"; do
+                systemctl unmask "badvpn-udpgw@$p" 2>/dev/null || true
+                systemctl enable --now "badvpn-udpgw@$p" 2>/dev/null || true
+            done
+            sleep 1.5
+            ;;
+        3)
+            echo -e "${yellow}Mematikan service BadVPN...${nc}"
+            for p in "${PORTS[@]}"; do
+                systemctl stop "badvpn-udpgw@$p" 2>/dev/null || true
+            done
+            sleep 1
+            ;;
+        4)
+            echo -e "${cyan}Memasang / Memperbaiki BadVPN UDPGW...${nc}"
+            bash -c "$(curl -fsSL https://raw.githubusercontent.com/angga2103/satset/main/files/install-badvpn.sh 2>/dev/null || cat /etc/satset/install-badvpn.sh 2>/dev/null)" || true
+            read -n 1 -s -r -p "Tekan [ Enter ] untuk kembali ke menu BadVPN..."
+            ;;
+        0|x|X)
+            clear
+            m-ssh
+            exit 0
+            ;;
+        *)
+            echo "Pilihan tidak valid."
+            sleep 1
+            ;;
+    esac
+done

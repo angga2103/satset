@@ -108,9 +108,26 @@ wget -q -O /tmp/install-badvpn.sh "${REPO}/files/install-badvpn.sh${CACHE_BUSTER
 curl -fsSL -o /tmp/install-badvpn.sh "${REPO}/files/install-badvpn.sh${CACHE_BUSTER}" 2>/dev/null || true
 if [ -s /tmp/install-badvpn.sh ]; then
     chmod +x /tmp/install-badvpn.sh 2>/dev/null || true
-    bash /tmp/install-badvpn.sh >/dev/null 2>&1 || true
+    bash /tmp/install-badvpn.sh || true
     rm -f /tmp/install-badvpn.sh
-    echo -e "${green}✓ BadVPN UDPGW Gaming (7100, 7200, 7300) aktif.${NC}"
+    echo -e "${green}✓ BadVPN UDPGW Gaming (7100, 7200, 7300) siap digunakan.${NC}"
+fi
+
+# Cache data jaringan VPS untuk mempercepat transisi respon CLI menu
+mkdir -p /etc/xray
+if [ ! -s /etc/xray/ipvps ]; then
+    curr_ip=$(curl -s --max-time 2 ipv4.icanhazip.com 2>/dev/null || curl -s --max-time 2 ipinfo.io/ip 2>/dev/null || echo "")
+    [ -n "$curr_ip" ] && echo "$curr_ip" > /etc/xray/ipvps 2>/dev/null || true
+fi
+if [ ! -s /etc/xray/isp ] || [ ! -s /etc/xray/city ]; then
+    resp=$(curl -s --max-time 2 "http://ip-api.com/json/?fields=country,city,isp" 2>/dev/null || true)
+    isp_val=$(echo "$resp" | jq -r '.isp // empty' 2>/dev/null || true)
+    city_val=$(echo "$resp" | jq -r '.city // empty' 2>/dev/null || true)
+    country_val=$(echo "$resp" | jq -r '.country // empty' 2>/dev/null || true)
+    [ -n "$isp_val" ] && echo "$isp_val" > /etc/xray/isp 2>/dev/null || true
+    if [ -n "$city_val" ]; then
+        [ -n "$country_val" ] && echo "$city_val, $country_val" > /etc/xray/city 2>/dev/null || echo "$city_val" > /etc/xray/city 2>/dev/null
+    fi
 fi
 
 echo -e "${green}✓ Berkas Bot Store & Optimasi Jaringan berhasil diperbarui.${NC}"

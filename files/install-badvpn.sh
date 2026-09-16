@@ -20,54 +20,70 @@ PORTS=(7100 7200 7300)
 
 mkdir -p "$INSTALL_DIR"
 
-# 1. Unduh binary prebuilt x86_64 atau kompilasi dari source
-NEED_BUILD=0
-if [ ! -x "$BADVPN_BIN" ]; then
-    echo -e "${yellow}[BadVPN] Mengunduh binary precompiled badvpn-udpgw...${nc}"
+check_badvpn_binary() {
+    local bin="$1"
+    if [ -x "$bin" ]; then
+        if "$bin" --version >/dev/null 2>&1 || "$bin" --help >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# 1. Periksa apakah binary yang ada sudah berfungsi dengan benar
+if [ -f "$BADVPN_BIN" ]; then
+    if ! check_badvpn_binary "$BADVPN_BIN"; then
+        echo -e "${yellow}[BadVPN] Binary lama ditemukan namun tidak valid / error. Menghapus untuk reinstall...${nc}"
+        rm -f "$BADVPN_BIN" /usr/bin/badvpn-udpgw
+    fi
+fi
+
+# 2. Jika belum valid, coba unduh prebuilt binary
+if ! check_badvpn_binary "$BADVPN_BIN"; then
+    echo -e "${yellow}[BadVPN] Mencoba unduh binary precompiled badvpn-udpgw...${nc}"
     PREBUILT_URLS=(
         "https://raw.githubusercontent.com/daybreakersx/premscript/master/badvpn-udpgw64"
         "https://raw.githubusercontent.com/inoybe/vps/main/badvpn/badvpn-udpgw"
     )
 
-    DOWNLOADED=0
     for url in "${PREBUILT_URLS[@]}"; do
         if command -v curl >/dev/null 2>&1; then
-            curl -fsSL --connect-timeout 10 -o "$BADVPN_BIN" "$url" 2>/dev/null || true
+            curl -fsSL --connect-timeout 8 -o "$BADVPN_BIN" "$url" 2>/dev/null || true
         elif command -v wget >/dev/null 2>&1; then
-            wget -q --timeout=10 -O "$BADVPN_BIN" "$url" 2>/dev/null || true
+            wget -q --timeout=8 -O "$BADVPN_BIN" "$url" 2>/dev/null || true
         fi
 
         if [ -s "$BADVPN_BIN" ]; then
             chmod +x "$BADVPN_BIN"
-            # Test run binary
-            if "$BADVPN_BIN" --help >/dev/null 2>&1; then
-                DOWNLOADED=1
-                echo -e "${green}[BadVPN] Binary precompiled berhasil dipasang.${nc}"
+            if check_badvpn_binary "$BADVPN_BIN"; then
+                echo -e "${green}[BadVPN] Binary precompiled valid dan berhasil dipasang.${nc}"
                 break
+            else
+                rm -f "$BADVPN_BIN"
             fi
         fi
     done
-
-    if [ "$DOWNLOADED" -eq 0 ]; then
-        NEED_BUILD=1
-    fi
 fi
 
-# 2. Kompilasi resmi jika prebuilt tidak tersedia
-if [ "$NEED_BUILD" -eq 1 ] && [ ! -x "$BADVPN_BIN" ]; then
+# 3. Jika prebuilt tidak cocok (contoh: Ubuntu 24.04 glibc baru), kompilasi langsung dari source resmi
+if ! check_badvpn_binary "$BADVPN_BIN"; then
     echo -e "${yellow}[BadVPN] Mengompilasi badvpn-udpgw dari source resmi ambrop72...${nc}"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y >/dev/null 2>&1 || true
-    apt-get install -y cmake make gcc g++ git libssl-dev pkg-config >/dev/null 2>&1 || true
+    apt-get install -y --no-install-recommends cmake make gcc g++ git pkg-config >/dev/null 2>&1 || true
 
     TMP_BUILD=$(mktemp -d)
     if git clone --depth 1 https://github.com/ambrop72/badvpn.git "$TMP_BUILD/badvpn" >/dev/null 2>&1; then
         mkdir -p "$TMP_BUILD/badvpn/build"
         cd "$TMP_BUILD/badvpn/build"
-        cmake .. -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 >/dev/null 2>&1
+        cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 >/dev/null 2>&1
         make -j"$(nproc 2>/dev/null || echo 1)" >/dev/null 2>&1
         if [ -f udpgw/badvpn-udpgw ]; then
             cp -f udpgw/badvpn-udpgw "$BADVPN_BIN"
+            chmod +x "$BADVPN_BIN"
+            echo -e "${green}[BadVPN] Kompilasi berhasil!${nc}"
+        elif [ -f badvpn-udpgw ]; then
+            cp -f badvpn-udpgw "$BADVPN_BIN"
             chmod +x "$BADVPN_BIN"
             echo -e "${green}[BadVPN] Kompilasi berhasil!${nc}"
         fi
@@ -75,15 +91,16 @@ if [ "$NEED_BUILD" -eq 1 ] && [ ! -x "$BADVPN_BIN" ]; then
     rm -rf "$TMP_BUILD"
 fi
 
-# Pastikan symlink /usr/bin ada
-if [ -x "$BADVPN_BIN" ]; then
-    ln -sf "$BADVPN_BIN" /usr/bin/badvpn-udpgw
+# 4. Verifikasi akhir binary
+if check_badvpn_binary "$BADVPN_BIN"; then
+    ln -sf "$BADVPN_BIN" /usr/bin/badvpn-udpgw 2>/dev/null || true
+    cp -f "$BADVPN_BIN" /usr/bin/badvpn-udpgw 2>/dev/null || true
 else
-    echo -e "${red}[BadVPN] [ERROR] Gagal memasang badvpn-udpgw binary.${nc}"
+    echo -e "${red}[BadVPN] [ERROR] Gagal memasang badvpn-udpgw binary yang dapat dijalankan di OS ini.${nc}"
     exit 1
 fi
 
-# 3. Buat template service systemd
+# 5. Pasang template service systemd
 echo -e "${yellow}[BadVPN] Memasang unit systemd badvpn-udpgw@.service...${nc}"
 cat > /etc/systemd/system/badvpn-udpgw@.service << 'EOF'
 [Unit]
@@ -94,7 +111,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:%i --max-clients 500
+ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:%i --max-clients 500 --loglevel warning
 Restart=always
 RestartSec=3
 LimitNOFILE=65535
@@ -105,14 +122,15 @@ EOF
 
 systemctl daemon-reload
 
-# 4. Aktifkan dan jalankan untuk masing-masing port
+# 6. Aktifkan dan restart untuk setiap port
 for port in "${PORTS[@]}"; do
     echo -e "${cyan}[BadVPN] Mengaktifkan service badvpn-udpgw di port ${port}...${nc}"
+    systemctl unmask "badvpn-udpgw@${port}" 2>/dev/null || true
     systemctl enable "badvpn-udpgw@${port}" >/dev/null 2>&1 || true
     systemctl restart "badvpn-udpgw@${port}" >/dev/null 2>&1 || true
 done
 
-# 5. Aturan firewall iptables
+# 7. Aturan firewall iptables
 if command -v iptables >/dev/null 2>&1; then
     for port in "${PORTS[@]}"; do
         iptables -C INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null || true
@@ -120,12 +138,21 @@ if command -v iptables >/dev/null 2>&1; then
     done
 fi
 
-# 6. Verifikasi status
-echo -e "${green}✓ BadVPN UDPGW berhasil aktif pada port: ${PORTS[*]}${nc}"
+# 8. Verifikasi status
+sleep 1
+all_running=1
 for port in "${PORTS[@]}"; do
     if systemctl is-active --quiet "badvpn-udpgw@${port}"; then
         echo -e "  • Port ${port}: ${green}ACTIVE (Running)${nc}"
     else
-        echo -e "  • Port ${port}: ${yellow}STARTING${nc}"
+        echo -e "  • Port ${port}: ${red}STOPPED (Failed to start)${nc}"
+        journalctl -u "badvpn-udpgw@${port}" -n 3 --no-pager 2>/dev/null || true
+        all_running=0
     fi
 done
+
+if [ "$all_running" -eq 1 ]; then
+    echo -e "${green}✓ BadVPN UDPGW berhasil aktif pada port: ${PORTS[*]}${nc}"
+else
+    echo -e "${yellow}⚠ Beberapa port BadVPN belum aktif. Periksa log systemd di atas.${nc}"
+fi
