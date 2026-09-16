@@ -274,8 +274,13 @@ curl -fsSL -o "${TMP_DIR}/menu.zip" "$REPO_RAW/menu/menu.zip?v=$(date +%s)" 2>/d
 if [ -f "${TMP_DIR}/menu.zip" ]; then
     unzip -o -q "${TMP_DIR}/menu.zip" -d "${TMP_DIR}"
     if [ -d "${TMP_DIR}/menu" ]; then
+        sed -i 's/\r$//' "${TMP_DIR}/menu"/* 2>/dev/null || true
         chmod +x "${TMP_DIR}/menu"/*
         mv -f "${TMP_DIR}/menu"/* /usr/local/sbin/
+    else
+        sed -i 's/\r$//' "${TMP_DIR}"/* 2>/dev/null || true
+        chmod +x "${TMP_DIR}"/* 2>/dev/null || true
+        mv -f "${TMP_DIR}"/* /usr/local/sbin/ 2>/dev/null || true
     fi
 fi
 rm -rf "${TMP_DIR}"
