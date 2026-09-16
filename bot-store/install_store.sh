@@ -29,9 +29,10 @@ apt-get install -y python3 python3-pip python3-venv sqlite3 curl wget qrencode >
 
 # 2. Siapkan direktori kerja
 echo -e "${YELLOW}[2/5] Menyiapkan direktori /etc/satset/bot-store...${NC}"
-mkdir -p /etc/satset/bot-store
+TARGET_DIR="/etc/satset/bot-store"
+mkdir -p "$TARGET_DIR"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
 REPO_RAW="https://raw.githubusercontent.com/angga2103/satset/main/bot-store"
 
 BOT_FILES=(
@@ -46,16 +47,16 @@ BOT_FILES=(
     "install_store.sh"
 )
 
-# Salin dari direktori lokal jika ada, atau unduh dari repositori
+# Salin dari direktori lokal jika ada (dan bukan direktori target), atau unduh dari repositori
 for file in "${BOT_FILES[@]}"; do
-    if [ -n "$SCRIPT_DIR" ] && [ "$SCRIPT_DIR" != "/etc/satset/bot-store" ] && [ -f "${SCRIPT_DIR}/${file}" ]; then
-        cp -f "${SCRIPT_DIR}/${file}" "/etc/satset/bot-store/${file}"
-    elif [ ! -f "/etc/satset/bot-store/${file}" ] || [ "$SCRIPT_DIR" = "/dev/fd" ] || [ "$SCRIPT_DIR" = "/dev" ] || [ -z "$SCRIPT_DIR" ]; then
-        wget -q -O "/etc/satset/bot-store/${file}" "${REPO_RAW}/${file}" 2>/dev/null || \
-        curl -fsSL -o "/etc/satset/bot-store/${file}" "${REPO_RAW}/${file}" 2>/dev/null || true
+    if [ -n "$SCRIPT_DIR" ] && [ "$SCRIPT_DIR" != "$TARGET_DIR" ] && [ -f "${SCRIPT_DIR}/${file}" ]; then
+        cp -f "${SCRIPT_DIR}/${file}" "${TARGET_DIR}/${file}"
+    elif [ ! -f "${TARGET_DIR}/${file}" ] || [ "$SCRIPT_DIR" = "$TARGET_DIR" ] || [ "$SCRIPT_DIR" = "/dev/fd" ] || [ "$SCRIPT_DIR" = "/dev" ] || [ -z "$SCRIPT_DIR" ]; then
+        wget -q -O "${TARGET_DIR}/${file}" "${REPO_RAW}/${file}" 2>/dev/null || \
+        curl -fsSL -o "${TARGET_DIR}/${file}" "${REPO_RAW}/${file}" 2>/dev/null || true
     fi
 done
-chmod +x /etc/satset/bot-store/install_store.sh 2>/dev/null || true
+chmod +x "${TARGET_DIR}/install_store.sh" 2>/dev/null || true
 
 # 3. Buat Python Virtual Environment (PEP 668 safe)
 echo -e "${YELLOW}[3/5] Menyiapkan Virtual Environment Python...${NC}"
