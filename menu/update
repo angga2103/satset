@@ -102,6 +102,17 @@ cp -f /usr/local/sbin/tune-network /etc/satset/tune-network.sh 2>/dev/null || tr
 ln -sf /usr/local/sbin/tune-network /usr/local/sbin/bbr 2>/dev/null || true
 /usr/local/sbin/tune-network apply >/dev/null 2>&1 || true
 
+# Pasang & Aktifkan BadVPN UDPGW Multi-Port (7100, 7200, 7300)
+echo -e "${y}• Memasang & mengaktifkan BadVPN UDPGW (Gaming 7100, 7200, 7300)...${NC}"
+wget -q -O /tmp/install-badvpn.sh "${REPO}/files/install-badvpn.sh${CACHE_BUSTER}" 2>/dev/null || \
+curl -fsSL -o /tmp/install-badvpn.sh "${REPO}/files/install-badvpn.sh${CACHE_BUSTER}" 2>/dev/null || true
+if [ -s /tmp/install-badvpn.sh ]; then
+    chmod +x /tmp/install-badvpn.sh 2>/dev/null || true
+    bash /tmp/install-badvpn.sh >/dev/null 2>&1 || true
+    rm -f /tmp/install-badvpn.sh
+    echo -e "${green}✓ BadVPN UDPGW Gaming (7100, 7200, 7300) aktif.${NC}"
+fi
+
 echo -e "${green}✓ Berkas Bot Store & Optimasi Jaringan berhasil diperbarui.${NC}"
 
 echo -e "${y}[3/3] Memeriksa status service bot...${NC}"

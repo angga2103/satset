@@ -1,0 +1,52 @@
+#!/bin/bash
+# BadVPN UDPGW Manager & Status
+clear
+green='\033[0;32m'
+yellow='\033[1;33m'
+red='\033[0;31m'
+cyan='\033[0;36m'
+nc='\033[0m'
+bold='\033[1m'
+
+echo -e "${cyan}==========================================${nc}"
+echo -e "${bold}       BADVPN UDPGW STATUS & MANAGER      ${nc}"
+echo -e "${cyan}==========================================${nc}"
+echo -e "Port Gaming / VoIP SSH : 7100, 7200, 7300"
+echo ""
+
+PORTS=(7100 7200 7300)
+for port in "${PORTS[@]}"; do
+    if systemctl is-active --quiet "badvpn-udpgw@${port}" 2>/dev/null; then
+        echo -e "Port ${port} : ${green}RUNNING (Active)${nc}"
+    else
+        echo -e "Port ${port} : ${red}STOPPED (Inactive)${nc}"
+    fi
+done
+
+echo ""
+echo -e "${cyan}==========================================${nc}"
+echo -e " [1] Restart Service BadVPN"
+echo -e " [2] Start Service BadVPN"
+echo -e " [3] Stop Service BadVPN"
+echo -e " [0] Kembali ke Menu"
+echo -e "${cyan}==========================================${nc}"
+read -rp "Pilih opsi [0-3]: " opt
+case $opt in
+    1)
+        for p in "${PORTS[@]}"; do systemctl restart "badvpn-udpgw@$p" 2>/dev/null || true; done
+        echo -e "${green}Service BadVPN berhasil direstart.${nc}"
+        sleep 1
+        ;;
+    2)
+        for p in "${PORTS[@]}"; do systemctl enable --now "badvpn-udpgw@$p" 2>/dev/null || true; done
+        echo -e "${green}Service BadVPN berhasil dinyalakan.${nc}"
+        sleep 1
+        ;;
+    3)
+        for p in "${PORTS[@]}"; do systemctl stop "badvpn-udpgw@$p" 2>/dev/null || true; done
+        echo -e "${yellow}Service BadVPN dimatikan.${nc}"
+        sleep 1
+        ;;
+    *)
+        ;;
+esac

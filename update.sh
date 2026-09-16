@@ -195,6 +195,16 @@ systemctl enable --now ws-stunnel >/dev/null 2>&1 || true
 ok "Dropbear & SSH WS Tunnel OK"
 
 ############################################
+# BADVPN UDPGW (GAMING 7100, 7200, 7300)
+############################################
+info "Setup BadVPN UDPGW Multi-Port"
+wget -q -O /tmp/install-badvpn.sh "$REPO_RAW/files/install-badvpn.sh" || true
+chmod +x /tmp/install-badvpn.sh 2>/dev/null || true
+bash /tmp/install-badvpn.sh || true
+rm -f /tmp/install-badvpn.sh
+ok "BadVPN UDPGW OK"
+
+############################################
 # FIREWALL LIMIT
 ############################################
 info "Firewall limit ($IPTABLES_LIMIT_MODE)"
@@ -294,5 +304,5 @@ ok "Menu & Bot Store OK"
 # FINAL
 ############################################
 systemctl daemon-reload
-systemctl enable --now nginx xray cron vnstat dropbear ws-stunnel
+systemctl enable --now nginx xray cron vnstat dropbear ws-stunnel badvpn-udpgw@7100 badvpn-udpgw@7200 badvpn-udpgw@7300
 ok "SETUP SELESAI — Reboot disarankan"

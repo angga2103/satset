@@ -50,6 +50,7 @@ echo -e "${ungu}[${BIWhite}07${ungu}] ${NC}${BIWhite}Check Ram & CPU${NC}"
 echo -e "${ungu}[${BIWhite}08${ungu}] ${NC}${BIWhite}Info Port${NC}"
 echo -e "${ungu}[${BIWhite}09${ungu}] ${NC}${BIWhite}Rebuild VPS${NC}"
 echo -e "${ungu}[${BIWhite}10${ungu}] ${NC}${BIWhite}Status TCP BBR & Anti-DDoS${NC}"
+echo -e "${ungu}[${BIWhite}11${ungu}] ${NC}${BIWhite}Status BadVPN UDPGW (Gaming)${NC}"
 echo -e "${BIWhite}──────────────────────────────────────${NC}"
 echo -e "${Lime}Input x or [ Ctrl+C ] » To-${BIWhite}Exit${NC}"
 echo -e "${BIWhite}──────────────────────────────────────${NC}"
@@ -67,6 +68,7 @@ case $opt in
 8) clear ; prot ;;
 9) clear ; m-rebuild ;;
 10) clear ; bbr ; m-setting ;;
+11) clear ; badvpn ; m-setting ;;
 0) clear ; menu ; exit ;;
 x) menu ;;
 *) echo "anda salah tekan" ; sleep 1 ; m-setting ;;

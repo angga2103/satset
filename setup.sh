@@ -422,6 +422,15 @@ EOF
     systemctl daemon-reload >/dev/null 2>&1 || true
     systemctl enable ws-stunnel >/dev/null 2>&1 || true
     systemctl restart ws-stunnel >/dev/null 2>&1 || true
+
+    # Pasang BadVPN UDPGW (Port 7100, 7200, 7300)
+    print_install "Memasang BadVPN UDPGW (Gaming Port 7100, 7200, 7300)"
+    wget -q -O /tmp/install-badvpn.sh "${REPO}files/install-badvpn.sh" || true
+    chmod +x /tmp/install-badvpn.sh 2>/dev/null || true
+    bash /tmp/install-badvpn.sh >/dev/null 2>&1 || true
+    rm -f /tmp/install-badvpn.sh
+    print_success "BadVPN UDPGW Gaming (7100, 7200, 7300)"
+
     print_success "Dropbear & SSH WebSocket Tunnel"
 }
 function setup_rc_local_ipv6(){
@@ -682,6 +691,8 @@ systemctl enable --now rc-local
 systemctl enable --now cron
 systemctl enable --now netfilter-persistent
 systemctl enable --now fail2ban
+systemctl enable --now badvpn-udpgw@7100 badvpn-udpgw@7200 badvpn-udpgw@7300 >/dev/null 2>&1 || true
+systemctl restart badvpn-udpgw@7100 badvpn-udpgw@7200 badvpn-udpgw@7300 >/dev/null 2>&1 || true
 history -c
 echo "unset HISTFILE" >> /etc/profile
 cd
