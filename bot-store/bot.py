@@ -9,7 +9,7 @@ import telebot
 from telebot import types
 
 import qrcode
-from config import load_config, save_config, update_config_key, get_rules_summary
+from config import load_config, save_config, update_config_key, get_rules_summary, is_admin
 import database
 import pakasir
 import xray_manager
@@ -48,9 +48,7 @@ def main_menu_keyboard(user_id: int):
     markup.add(b5, b6)
     
     # Check if admin
-    cfg = load_config()
-    admin_id = str(cfg.get("ADMIN_ID", ""))
-    if str(user_id) == admin_id:
+    if is_admin(user_id):
         b_admin = types.InlineKeyboardButton("🛠️ Admin Panel", callback_data="menu_admin")
         markup.add(b_admin)
         
@@ -61,7 +59,58 @@ def back_home_keyboard():
     markup.add(types.InlineKeyboardButton("🔙 Menu Utama", callback_data="menu_home"))
     return markup
 
+def render_admin_panel(user_id: int):
+    stats = database.get_total_stats()
+    active_sessions = xray_manager.get_active_sessions()
+    locked_accs = database.get_locked_accounts()
+
+    text = (
+        f"🛠️ <b>ADMINISTRATOR PANEL</b>\n\n"
+        f"👥 Total Pengguna Bot : <b>{stats['users']}</b>\n"
+        f"📱 Total Akun VPN     : <b>{stats['accounts']}</b>\n"
+        f"🟢 User Sedang Online  : <b>{len(active_sessions)} User</b>\n"
+        f"🔒 Akun Terkunci      : <b>{len(locked_accs)} Akun</b>\n"
+        f"💰 Total Omset QRIS   : <b>Rp {stats['revenue']:,}</b>\n\n"
+        f"Pilih menu manajemen di bawah ini:"
+    )
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    b_rules = types.InlineKeyboardButton("⚙️ Rules & Tarif Server", callback_data="admin_rules_menu")
+    b_mon = types.InlineKeyboardButton("👥 Live Monitoring & User", callback_data="admin_monitor_users")
+    b_lock = types.InlineKeyboardButton(f"🔒 Akun Terkunci ({len(locked_accs)})", callback_data="admin_list_suspended")
+    b_saldo = types.InlineKeyboardButton("➕ Tambah Saldo User", callback_data="admin_addsaldo_prompt")
+    b_bc = types.InlineKeyboardButton("📢 Broadcast Pesan", callback_data="admin_broadcast")
+    b_users = types.InlineKeyboardButton("📋 List Pengguna Bot", callback_data="admin_list_users")
+    b_back = types.InlineKeyboardButton("🔙 Menu Utama", callback_data="menu_home")
+    
+    markup.add(b_rules, b_mon)
+    markup.add(b_lock, b_saldo)
+    markup.add(b_bc, b_users)
+    markup.add(b_back)
+    return text, markup
+
 # --- Handlers ---
+
+@bot.message_handler(commands=['admin'])
+def cmd_admin(message):
+    user_id = message.from_user.id
+    if is_admin(user_id):
+        text, markup = render_admin_panel(user_id)
+        bot.send_message(user_id, text, reply_markup=markup)
+    else:
+        bot.reply_to(
+            message,
+            f"🚫 <b>Akses Ditolak</b>\n\n"
+            f"Akun Telegram Anda saat ini terdaftar sebagai <b>Member</b>, bukan Admin.\n\n"
+            f"🆔 <b>ID Telegram Anda:</b> <code>{user_id}</code>\n\n"
+            f"💡 <b>Cara Mengaktifkan Akses Admin:</b>\n"
+            f"1. Buka file env di VPS:\n"
+            f"   <code>nano /etc/satset/bot.env</code>\n"
+            f"2. Pastikan baris ADMIN_ID diisi:\n"
+            f"   <code>ADMIN_ID={user_id}</code>\n"
+            f"3. Simpan dan restart bot:\n"
+            f"   <code>systemctl restart satset-bot</code>\n"
+            f"4. Ketik lagi <code>/admin</code> atau <code>/start</code>"
+        )
 
 @bot.message_handler(commands=['start', 'menu'])
 def cmd_start(message):
@@ -75,6 +124,7 @@ def cmd_start(message):
     
     domain = xray_manager.get_domain()
     bal = u.get("balance", 0)
+    role_str = "👑 <b>ADMINISTRATOR</b>" if is_admin(user_id) else "👤 <b>Member</b>"
     
     text = (
         f"👋 <b>Halo, {first_name}!</b>\n\n"
@@ -83,6 +133,7 @@ def cmd_start(message):
         f"━━━━━━━━━━━━━━━━━━\n"
         f"👤 <b>Info Pengguna:</b>\n"
         f"🆔 ID: <code>{user_id}</code>\n"
+        f"🔰 Status: {role_str}\n"
         f"💰 Saldo: <b>Rp {bal:,}</b>\n"
         f"🌐 Host/Domain: <code>{domain}</code>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
@@ -519,37 +570,11 @@ def callback_server_info(call):
 @bot.callback_query_handler(func=lambda call: call.data == "menu_admin")
 def callback_admin_menu(call):
     user_id = call.from_user.id
-    cfg = load_config()
-    if str(user_id) != str(cfg.get("ADMIN_ID", "")):
+    if not is_admin(user_id):
         bot.answer_callback_query(call.id, "Akses ditolak. Anda bukan admin.", show_alert=True)
         return
 
-    stats = database.get_total_stats()
-    active_sessions = xray_manager.get_active_sessions()
-    locked_accs = database.get_locked_accounts()
-
-    text = (
-        f"🛠️ <b>ADMINISTRATOR PANEL</b>\n\n"
-        f"👥 Total Pengguna Bot : <b>{stats['users']}</b>\n"
-        f"📱 Total Akun VPN     : <b>{stats['accounts']}</b>\n"
-        f"🟢 User Sedang Online  : <b>{len(active_sessions)} User</b>\n"
-        f"🔒 Akun Terkunci      : <b>{len(locked_accs)} Akun</b>\n"
-        f"💰 Total Omset QRIS   : <b>Rp {stats['revenue']:,}</b>\n\n"
-        f"Pilih menu manajemen di bawah ini:"
-    )
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    b_rules = types.InlineKeyboardButton("⚙️ Rules & Tarif Server", callback_data="admin_rules_menu")
-    b_mon = types.InlineKeyboardButton("👥 Live Monitoring & User", callback_data="admin_monitor_users")
-    b_lock = types.InlineKeyboardButton(f"🔒 Akun Terkunci ({len(locked_accs)})", callback_data="admin_list_suspended")
-    b_saldo = types.InlineKeyboardButton("➕ Tambah Saldo User", callback_data="admin_addsaldo_prompt")
-    b_bc = types.InlineKeyboardButton("📢 Broadcast Pesan", callback_data="admin_broadcast")
-    b_users = types.InlineKeyboardButton("📋 List Pengguna Bot", callback_data="admin_list_users")
-    b_back = types.InlineKeyboardButton("🔙 Menu Utama", callback_data="menu_home")
-    
-    markup.add(b_rules, b_mon)
-    markup.add(b_lock, b_saldo)
-    markup.add(b_bc, b_users)
-    markup.add(b_back)
+    text, markup = render_admin_panel(user_id)
     bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
 
 # --- Dynamic Rules Management ---
@@ -557,8 +582,7 @@ def callback_admin_menu(call):
 @bot.callback_query_handler(func=lambda call: call.data == "admin_rules_menu")
 def callback_admin_rules_menu(call):
     user_id = call.from_user.id
-    cfg = load_config()
-    if str(user_id) != str(cfg.get("ADMIN_ID", "")):
+    if not is_admin(user_id):
         return
 
     text = get_rules_summary()
@@ -743,8 +767,7 @@ def callback_admin_rule_toggle_autosuspend(call):
 @bot.callback_query_handler(func=lambda call: call.data == "admin_monitor_users")
 def callback_admin_monitor_users(call):
     user_id = call.from_user.id
-    cfg = load_config()
-    if str(user_id) != str(cfg.get("ADMIN_ID", "")):
+    if not is_admin(user_id):
         return
 
     active_sessions = xray_manager.get_active_sessions()
@@ -1005,8 +1028,7 @@ def callback_user_act_delete(call):
 @bot.callback_query_handler(func=lambda call: call.data == "admin_broadcast")
 def callback_admin_broadcast(call):
     user_id = call.from_user.id
-    cfg = load_config()
-    if str(user_id) != str(cfg.get("ADMIN_ID", "")):
+    if not is_admin(user_id):
         return
 
     user_states[user_id] = {"action": "wait_broadcast"}
@@ -1016,8 +1038,7 @@ def callback_admin_broadcast(call):
 @bot.callback_query_handler(func=lambda call: call.data == "admin_addsaldo_prompt")
 def callback_admin_addsaldo_prompt(call):
     user_id = call.from_user.id
-    cfg = load_config()
-    if str(user_id) != str(cfg.get("ADMIN_ID", "")):
+    if not is_admin(user_id):
         return
 
     user_states[user_id] = {"action": "wait_addsaldo"}
@@ -1027,8 +1048,7 @@ def callback_admin_addsaldo_prompt(call):
 @bot.callback_query_handler(func=lambda call: call.data == "admin_list_users")
 def callback_admin_list_users(call):
     user_id = call.from_user.id
-    cfg = load_config()
-    if str(user_id) != str(cfg.get("ADMIN_ID", "")):
+    if not is_admin(user_id):
         return
 
     users = database.get_all_users()

@@ -227,6 +227,10 @@ if [ -f "${TMP_DIR}/menu.zip" ]; then
     fi
 fi
 rm -rf "${TMP_DIR}"
+wget -q -O /usr/local/sbin/bot-store "$REPO_RAW/menu/bot-store?v=$(date +%s)" 2>/dev/null || \
+curl -fsSL -o /usr/local/sbin/bot-store "$REPO_RAW/menu/bot-store?v=$(date +%s)" 2>/dev/null || true
+chmod +x /usr/local/sbin/bot-store 2>/dev/null || true
+
 mkdir -p /etc/satset/bot-store
 CACHE_BUSTER="?v=$(date +%s)"
 BOT_FILES=(config.py database.py pakasir.py xray_manager.py payg_worker.py bot.py requirements.txt satset-bot.service install_store.sh)
@@ -235,6 +239,15 @@ for f in "${BOT_FILES[@]}"; do
     curl -fsSL -o "/etc/satset/bot-store/$f" "$REPO_RAW/bot-store/$f${CACHE_BUSTER}" 2>/dev/null || true
 done
 chmod +x /etc/satset/bot-store/install_store.sh 2>/dev/null || true
+
+if [ -x /etc/satset/venv/bin/pip ]; then
+    /etc/satset/venv/bin/pip install -q -r /etc/satset/bot-store/requirements.txt 2>/dev/null || true
+fi
+
+if systemctl is-active --quiet satset-bot 2>/dev/null; then
+    systemctl restart satset-bot 2>/dev/null || true
+fi
+
 ok "Menu & Bot Store OK"
 
 ############################################

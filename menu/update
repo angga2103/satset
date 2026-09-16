@@ -34,6 +34,11 @@ if [ -f "${TMP_DIR}/menu.zip" ]; then
 fi
 rm -rf "${TMP_DIR}"
 
+# Pastikan bot-store terbaru terpasang di /usr/local/sbin
+wget -q -O /usr/local/sbin/bot-store "${REPO}/menu/bot-store${CACHE_BUSTER}" 2>/dev/null || \
+curl -fsSL -o /usr/local/sbin/bot-store "${REPO}/menu/bot-store${CACHE_BUSTER}" 2>/dev/null || true
+chmod +x /usr/local/sbin/bot-store 2>/dev/null || true
+
 echo -e "${y}[2/3] Memperbarui modul Bot Store & PAYG...${NC}"
 mkdir -p /etc/satset/bot-store
 BOT_FILES=(
@@ -52,14 +57,25 @@ for f in "${BOT_FILES[@]}"; do
     curl -fsSL -o "/etc/satset/bot-store/$f" "${REPO}/bot-store/$f${CACHE_BUSTER}" 2>/dev/null || true
 done
 chmod +x /etc/satset/bot-store/install_store.sh 2>/dev/null || true
+
+# Update python dependencies jika venv tersedia
+if [ -x /etc/satset/venv/bin/pip ]; then
+    /etc/satset/venv/bin/pip install -q -r /etc/satset/bot-store/requirements.txt 2>/dev/null || true
+fi
+
 echo -e "${green}✓ Berkas Bot Store berhasil diperbarui.${NC}"
 
 echo -e "${y}[3/3] Memeriksa status service bot...${NC}"
 if systemctl is-active --quiet satset-bot 2>/dev/null; then
     systemctl restart satset-bot 2>/dev/null || true
-    echo -e "${green}✓ Service satset-bot berhasil direstart.${NC}"
+    sleep 2
+    if systemctl is-active --quiet satset-bot 2>/dev/null; then
+        echo -e "${green}✓ Service satset-bot berhasil direstart (Running).${NC}"
+    else
+        echo -e "${RED}⚠ Service satset-bot gagal aktif setelah restart! Cek log: journalctl -u satset-bot -n 25${NC}"
+    fi
 else
-    echo -e "${CYAN}• Service satset-bot dalam status non-aktif (siap di-install).${NC}"
+    echo -e "${CYAN}• Service satset-bot dalam status non-aktif (Jalankan 'install-store' atau 'm-bot' untuk mengaktifkan).${NC}"
 fi
 
 echo ""

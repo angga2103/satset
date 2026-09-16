@@ -38,6 +38,8 @@ def load_config():
                     if line and not line.startswith("#") and "=" in line:
                         k, v = line.split("=", 1)
                         k = k.strip()
+                        if "#" in v:
+                            v = v.split("#", 1)[0]
                         v = v.strip().strip('"').strip("'")
                         if k in config:
                             if isinstance(config[k], int):
@@ -102,4 +104,16 @@ def get_rules_summary() -> str:
         f"• ⚡ <b>Harga PAYG Harian</b>: <code>Rp {p_payg_daily:,}</code> / Hari\n"
         f"• ⚡ <b>Harga PAYG Kuota 10GB</b>: <code>Rp {p_payg_10gb:,}</code>\n"
     )
+
+def is_admin(user_id) -> bool:
+    """Check if user_id is configured as an admin (supports single ID or comma/space separated list)"""
+    if not user_id:
+        return False
+    cfg = load_config()
+    raw = str(cfg.get("ADMIN_ID", "")).strip()
+    if not raw:
+        return False
+    admin_ids = [a.strip() for a in raw.replace(",", " ").replace(";", " ").split() if a.strip()]
+    return str(user_id) in admin_ids
+
 
