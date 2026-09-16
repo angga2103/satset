@@ -205,7 +205,8 @@ print(config.get_rules_summary().replace('<b>','').replace('</b>','').replace('<
                     read -rp "Limit IP baru: " nip
                     $PYTHON_BIN -c "
 import sys, re; sys.path.append('/etc/satset/bot-store'); import config
-m = re.search(r'\d+', '$nip')
+raw = sys.argv[1] if len(sys.argv) > 1 else ''
+m = re.search(r'\d+', raw)
 if m:
     val = int(m.group())
     config.update_config_key('DEFAULT_IP_LIMIT', val)
@@ -213,17 +214,18 @@ if m:
     print(config.get_rules_summary().replace('<b>','').replace('</b>','').replace('<code>','').replace('</code>',''))
 else:
     print('\033[0;31mNilai tidak valid. Masukkan angka.\033[0m')
-"
+" "$nip"
                     systemctl restart satset-bot 2>/dev/null || true
                     ;;
                 2) 
                     read -rp "Limit Kuota baru (GB, 0=unlimited): " nq
                     $PYTHON_BIN -c "
 import sys, re; sys.path.append('/etc/satset/bot-store'); import config
-if 'unlimited' in '$nq'.lower():
+raw = sys.argv[1] if len(sys.argv) > 1 else ''
+if 'unlimited' in raw.lower():
     val = 0
 else:
-    m = re.search(r'\d+', '$nq')
+    m = re.search(r'\d+', raw)
     val = int(m.group()) if m else -1
 if val >= 0:
     config.update_config_key('DEFAULT_QUOTA_GB', val)
@@ -232,14 +234,15 @@ if val >= 0:
     print(config.get_rules_summary().replace('<b>','').replace('</b>','').replace('<code>','').replace('</code>',''))
 else:
     print('\033[0;31mNilai tidak valid. Masukkan angka atau unlimited.\033[0m')
-"
+" "$nq"
                     systemctl restart satset-bot 2>/dev/null || true
                     ;;
                 3) 
                     read -rp "Durasi suspen baru (menit): " ns
                     $PYTHON_BIN -c "
 import sys, re; sys.path.append('/etc/satset/bot-store'); import config
-m = re.search(r'\d+', '$ns')
+raw = sys.argv[1] if len(sys.argv) > 1 else ''
+m = re.search(r'\d+', raw)
 if m:
     val = int(m.group())
     config.update_config_key('SUSPEND_DURATION_MINUTES', val)
@@ -247,14 +250,15 @@ if m:
     print(config.get_rules_summary().replace('<b>','').replace('</b>','').replace('<code>','').replace('</code>',''))
 else:
     print('\033[0;31mNilai tidak valid. Masukkan angka.\033[0m')
-"
+" "$ns"
                     systemctl restart satset-bot 2>/dev/null || true
                     ;;
                 4) 
                     read -rp "Harga Bulanan baru (Rp): " npm
                     $PYTHON_BIN -c "
 import sys, re; sys.path.append('/etc/satset/bot-store'); import config
-clean = '$npm'.replace('.', '').replace(',', '')
+raw = sys.argv[1] if len(sys.argv) > 1 else ''
+clean = raw.replace('.', '').replace(',', '')
 m = re.search(r'\d+', clean)
 if m:
     val = int(m.group())
@@ -263,14 +267,15 @@ if m:
     print(config.get_rules_summary().replace('<b>','').replace('</b>','').replace('<code>','').replace('</code>',''))
 else:
     print('\033[0;31mNilai tidak valid. Masukkan angka.\033[0m')
-"
+" "$npm"
                     systemctl restart satset-bot 2>/dev/null || true
                     ;;
                 5) 
                     read -rp "Tarif PAYG Harian baru (Rp): " npp
                     $PYTHON_BIN -c "
 import sys, re; sys.path.append('/etc/satset/bot-store'); import config
-clean = '$npp'.replace('.', '').replace(',', '')
+raw = sys.argv[1] if len(sys.argv) > 1 else ''
+clean = raw.replace('.', '').replace(',', '')
 m = re.search(r'\d+', clean)
 if m:
     val = int(m.group())
@@ -279,7 +284,7 @@ if m:
     print(config.get_rules_summary().replace('<b>','').replace('</b>','').replace('<code>','').replace('</code>',''))
 else:
     print('\033[0;31mNilai tidak valid. Masukkan angka.\033[0m')
-"
+" "$npp"
                     systemctl restart satset-bot 2>/dev/null || true
                     ;;
             esac
@@ -318,11 +323,12 @@ for idx, acc in enumerate(locked, 1):
                 $PYTHON_BIN -c "
 import sys; sys.path.append('/etc/satset/bot-store')
 import database, xray_manager
-acc = database.get_account_by_username('$unb_u')
+u = sys.argv[1] if len(sys.argv) > 1 else ''
+acc = database.get_account_by_username(u)
 proto = acc.get('protocol', 'vmess') if acc else 'vmess'
-xray_manager.unsuspend_account(proto, '$unb_u')
-print('Akun $unb_u berhasil di-unban!')
-"
+xray_manager.unsuspend_account(proto, u)
+print(f'Akun {u} berhasil di-unban!')
+" "$unb_u"
             fi
             read -rp "Tekan Enter untuk kembali..."
             ;;

@@ -15,8 +15,14 @@ def get_connection():
     db_dir = os.path.dirname(db_file)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
-    conn = sqlite3.connect(db_file, check_same_thread=False)
+    conn = sqlite3.connect(db_file, check_same_thread=False, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=30000;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+    except Exception:
+        pass
     return conn
 
 def init_db():
@@ -107,6 +113,14 @@ def init_db():
     conn.commit()
     conn.close()
 
+    # Harden database file permissions (owner read/write only)
+    db_file = get_db_file()
+    if os.path.exists(db_file) and os.name != "nt":
+        try:
+            os.chmod(db_file, 0o600)
+        except Exception:
+            pass
+
 def get_or_create_user(user_id: int, username: str, first_name: str, admin_id=None):
     conn = get_connection()
     c = conn.cursor()
@@ -164,18 +178,19 @@ def add_balance(user_id: int, amount: int) -> int:
     return res["balance"] if res else 0
 
 def deduct_balance(user_id: int, amount: int) -> bool:
+    if amount <= 0:
+        return False
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    row = c.fetchone()
-    if not row or row["balance"] < amount:
-        conn.close()
-        return False
-        
-    c.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (amount, user_id))
+    # Atomic conditional update prevents double-spending race conditions
+    c.execute(
+        "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+        (amount, user_id, amount)
+    )
+    success = c.rowcount > 0
     conn.commit()
     conn.close()
-    return True
+    return success
 
 def create_transaction(order_id: str, user_id: int, amount: int, qris_url: str = "", qris_string: str = ""):
     conn = get_connection()
@@ -207,18 +222,24 @@ def get_pending_transactions():
 def complete_transaction(order_id: str):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT * FROM transactions WHERE order_id = ? AND status = 'pending'", (order_id,))
-    tx = c.fetchone()
-    if not tx:
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Atomic transition from 'pending' to 'completed': exactly one concurrent caller can succeed
+    c.execute(
+        "UPDATE transactions SET status = 'completed', completed_at = ? WHERE order_id = ? AND status = 'pending'",
+        (now, order_id)
+    )
+    if c.rowcount == 0:
+        conn.commit()
         conn.close()
         return None
-        
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("UPDATE transactions SET status = 'completed', completed_at = ? WHERE order_id = ?", (now, order_id))
-    c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (tx["amount"], tx["user_id"]))
+
+    c.execute("SELECT * FROM transactions WHERE order_id = ?", (order_id,))
+    tx = c.fetchone()
+    if tx:
+        c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (tx["amount"], tx["user_id"]))
     conn.commit()
     conn.close()
-    return dict(tx)
+    return dict(tx) if tx else None
 
 def add_vpn_account(user_id: int, protocol: str, vpn_username: str, uuid: str, plan_type: str, exp_date: str, config_link: str, quota_gb: int = 350, ip_limit: int = 1, price_paid: int = 0):
     conn = get_connection()

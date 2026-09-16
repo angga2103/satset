@@ -524,12 +524,17 @@ def get_active_sessions() -> dict:
     """
     sessions = {}
     
-    # 1. Parse Xray access.log
+    # 1. Parse Xray access.log (Bounded tail read to prevent OOM on large logs)
     access_log = "/var/log/xray/access.log"
     if os.path.exists(access_log):
         try:
-            with open(access_log, "r", encoding="utf-8", errors="ignore") as f:
-                lines = f.readlines()[-1500:]
+            CHUNK_SIZE = 131072  # Read at most last 128KB
+            with open(access_log, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                fsize = f.tell()
+                f.seek(max(0, fsize - CHUNK_SIZE), os.SEEK_SET)
+                raw_bytes = f.read()
+            lines = raw_bytes.decode("utf-8", errors="ignore").splitlines()[-1500:]
             
             for line in lines:
                 user = None

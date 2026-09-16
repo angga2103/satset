@@ -34,6 +34,7 @@ bot = telebot.TeleBot(BOT_TOKEN or "DUMMY_TOKEN", parse_mode="HTML")
 
 # User state storage for multi-step prompts (e.g. entering username, custom amount, broadcast)
 user_states = {}
+trial_locks = set()
 
 # Helper keyboards
 def main_menu_keyboard(user_id: int):
@@ -118,6 +119,7 @@ def cmd_start(message):
     user_id = message.from_user.id
     username = message.from_user.username or ""
     first_name = message.from_user.first_name or ""
+    user_states.pop(user_id, None)
     
     cfg = load_config()
     admin_id = cfg.get("ADMIN_ID")
@@ -191,6 +193,9 @@ def callback_topup_amount(call):
 def initiate_qris_payment(user_id: int, amount: int):
     if amount < 1000:
         bot.send_message(user_id, "Nominal minimal isi saldo adalah Rp 1.000.")
+        return
+    if amount > 10_000_000:
+        bot.send_message(user_id, "Nominal maksimal isi saldo adalah Rp 10.000.000 per transaksi.")
         return
 
     order_id = f"SATSET-{user_id}-{int(time.time())}"
@@ -445,10 +450,11 @@ def callback_trial(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("take_trial_"))
 def callback_take_trial(call):
     user_id = call.from_user.id
-    if database.has_used_trial(user_id):
-        bot.answer_callback_query(call.id, "Anda sudah pernah menggunakan jatah Trial Gratis.", show_alert=True)
+    if user_id in trial_locks or database.has_used_trial(user_id):
+        bot.answer_callback_query(call.id, "Anda sudah pernah menggunakan jatah Trial Gratis atau proses sedang berjalan.", show_alert=True)
         return
 
+    trial_locks.add(user_id)
     proto = call.data.replace("take_trial_", "")
     uname = f"trial{str(user_id)[-4:]}{int(time.time()) % 1000}"
     cfg = load_config()
@@ -463,6 +469,8 @@ def callback_take_trial(call):
         send_account_details(user_id, acc, title="🎉 AKUN TRIAL 1 HARI BERHASIL DIBUAT")
     except Exception as e:
         bot.send_message(user_id, f"Gagal membuat akun trial: {e}")
+    finally:
+        trial_locks.discard(user_id)
 
 # My accounts list
 @bot.callback_query_handler(func=lambda call: call.data == "menu_my_accounts")
@@ -825,6 +833,9 @@ def callback_admin_rules_menu(call):
 @bot.callback_query_handler(func=lambda call: call.data == "admin_rule_ip_menu")
 def callback_admin_rule_ip_menu(call):
     user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     cfg = load_config()
     cur = cfg.get("DEFAULT_IP_LIMIT", 1)
 
@@ -846,6 +857,9 @@ def callback_admin_rule_ip_menu(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("set_rule_ip_"))
 def callback_set_rule_ip(call):
     user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     val_str = call.data.replace("set_rule_ip_", "")
     if val_str == "custom":
         user_states[user_id] = {"action": "wait_custom_rule_ip"}
@@ -863,6 +877,9 @@ def callback_set_rule_ip(call):
 @bot.callback_query_handler(func=lambda call: call.data == "admin_rule_quota_menu")
 def callback_admin_rule_quota_menu(call):
     user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     cfg = load_config()
     cur = cfg.get("DEFAULT_QUOTA_GB", 350)
     cur_str = f"{cur} GB" if cur > 0 else "Unlimited"
@@ -886,6 +903,9 @@ def callback_admin_rule_quota_menu(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("set_rule_quota_"))
 def callback_set_rule_quota(call):
     user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     val_str = call.data.replace("set_rule_quota_", "")
     if val_str == "custom":
         user_states[user_id] = {"action": "wait_custom_rule_quota"}
@@ -904,6 +924,9 @@ def callback_set_rule_quota(call):
 @bot.callback_query_handler(func=lambda call: call.data == "admin_rule_suspend_menu")
 def callback_admin_rule_suspend_menu(call):
     user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     cfg = load_config()
     cur = cfg.get("SUSPEND_DURATION_MINUTES", 10)
 
@@ -925,6 +948,9 @@ def callback_admin_rule_suspend_menu(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("set_rule_suspend_"))
 def callback_set_rule_suspend(call):
     user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     val_str = call.data.replace("set_rule_suspend_", "")
     if val_str == "custom":
         user_states[user_id] = {"action": "wait_custom_rule_suspend"}
@@ -942,6 +968,9 @@ def callback_set_rule_suspend(call):
 @bot.callback_query_handler(func=lambda call: call.data == "admin_rule_price_monthly_prompt")
 def callback_admin_rule_price_monthly_prompt(call):
     user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     cfg = load_config()
     cur = cfg.get("PRICE_MONTHLY", 8000)
     user_states[user_id] = {"action": "wait_price_monthly"}
@@ -955,6 +984,9 @@ def callback_admin_rule_price_monthly_prompt(call):
 @bot.callback_query_handler(func=lambda call: call.data == "admin_rule_price_payg_prompt")
 def callback_admin_rule_price_payg_prompt(call):
     user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     cfg = load_config()
     cur_d = cfg.get("PRICE_PAYG_DAILY", 300)
     cur_q = cfg.get("PRICE_PAYG_10GB", 1000)
@@ -970,6 +1002,10 @@ def callback_admin_rule_price_payg_prompt(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin_rule_toggle_autosuspend")
 def callback_admin_rule_toggle_autosuspend(call):
+    user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     cfg = load_config()
     cur = cfg.get("AUTO_SUSPEND_ENABLED", 1)
     new_val = 0 if cur else 1
@@ -1010,6 +1046,9 @@ def callback_admin_monitor_users(call):
 @bot.callback_query_handler(func=lambda call: call.data == "admin_users_active_login")
 def callback_admin_users_active_login(call):
     user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     active_sessions = xray_manager.get_active_sessions()
 
     if not active_sessions:
@@ -1039,6 +1078,9 @@ def callback_admin_users_active_login(call):
 @bot.callback_query_handler(func=lambda call: call.data == "admin_list_suspended")
 def callback_admin_list_suspended(call):
     user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     locked = database.get_locked_accounts()
 
     if not locked:
@@ -1071,6 +1113,10 @@ def callback_admin_list_suspended(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("quick_unban_"))
 def callback_quick_unban(call):
+    user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     uname = call.data.replace("quick_unban_", "")
     acc = database.get_account_by_username(uname)
     proto = acc.get("protocol", "vmess") if acc else "vmess"
@@ -1081,6 +1127,9 @@ def callback_quick_unban(call):
 @bot.callback_query_handler(func=lambda call: call.data == "admin_users_all_vpn")
 def callback_admin_users_all_vpn(call):
     user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     accounts = database.get_all_vpn_accounts_detailed(limit=25)
 
     if not accounts:
@@ -1103,6 +1152,9 @@ def callback_admin_users_all_vpn(call):
 @bot.callback_query_handler(func=lambda call: call.data == "admin_search_user_prompt")
 def callback_admin_search_user_prompt(call):
     user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     user_states[user_id] = {"action": "wait_search_vpn_user"}
     text = "🔍 <b>CARI AKUN VPN</b>\n\nMasukkan username VPN yang ingin dicari:"
     bot.send_message(user_id, text, reply_markup=back_home_keyboard())
@@ -1112,6 +1164,9 @@ def callback_admin_search_user_prompt(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("manage_user_"))
 def callback_manage_user(call):
     user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     uname = call.data.replace("manage_user_", "")
     acc = database.get_account_by_username(uname)
 
@@ -1125,6 +1180,7 @@ def callback_manage_user(call):
     plan_type = str(acc.get("plan_type", "")).lower()
     raw_exp = str(acc.get("exp_date", ""))
     exp_display = "⚡ PAYG (Auto-Debet Harian)" if (plan_type == "payg" or raw_exp.upper() == "PAYG") else (raw_exp or "-")
+    tg_user = acc.get("user_id", "-")
 
     text = (
         f"👤 <b>KONTROL PENGGUNA: {uname}</b>\n"
@@ -1176,6 +1232,10 @@ def callback_manage_user(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("user_act_unsuspend_"))
 def callback_user_act_unsuspend(call):
+    user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     uname = call.data.replace("user_act_unsuspend_", "")
     acc = database.get_account_by_username(uname)
     proto = acc.get("protocol", "vmess") if acc else "vmess"
@@ -1186,6 +1246,10 @@ def callback_user_act_unsuspend(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("user_act_suspend_"))
 def callback_user_act_suspend(call):
+    user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     uname = call.data.replace("user_act_suspend_", "")
     acc = database.get_account_by_username(uname)
     proto = acc.get("protocol", "vmess") if acc else "vmess"
@@ -1198,6 +1262,10 @@ def callback_user_act_suspend(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("user_act_resetquota_"))
 def callback_user_act_resetquota(call):
+    user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     uname = call.data.replace("user_act_resetquota_", "")
     acc = database.get_account_by_username(uname)
     proto = acc.get("protocol", "vmess") if acc else "vmess"
@@ -1209,6 +1277,9 @@ def callback_user_act_resetquota(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("user_act_setquota_prompt_"))
 def callback_user_act_setquota_prompt(call):
     user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     uname = call.data.replace("user_act_setquota_prompt_", "")
     user_states[user_id] = {"action": "wait_user_custom_quota", "uname": uname}
     text = f"✏️ <b>UBAH LIMIT KUOTA UNTUK {uname}</b>\n\nMasukkan kuota baru dalam GB (contoh: <code>350</code>, atau <code>0</code> untuk unlimited):"
@@ -1217,6 +1288,9 @@ def callback_user_act_setquota_prompt(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("user_act_setip_prompt_"))
 def callback_user_act_setip_prompt(call):
     user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     uname = call.data.replace("user_act_setip_prompt_", "")
     user_states[user_id] = {"action": "wait_user_custom_ip", "uname": uname}
     text = f"✏️ <b>UBAH LIMIT IP UNTUK {uname}</b>\n\nMasukkan batas IP baru (contoh: <code>1</code>):"
@@ -1225,6 +1299,9 @@ def callback_user_act_setip_prompt(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("user_act_delconfirm_"))
 def callback_user_act_delconfirm(call):
     user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     uname = call.data.replace("user_act_delconfirm_", "")
     text = f"⚠️ <b>KONFIRMASI PENGHAPUSAN</b>\n\nApakah Anda yakin ingin menghapus akun <code>{uname}</code> secara permanen?"
     markup = types.InlineKeyboardMarkup()
@@ -1235,6 +1312,10 @@ def callback_user_act_delconfirm(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("user_act_delete_"))
 def callback_user_act_delete(call):
+    user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
     uname = call.data.replace("user_act_delete_", "")
     acc = database.get_account_by_username(uname)
     proto = acc.get("protocol", "vmess") if acc else "vmess"
@@ -1283,6 +1364,7 @@ def callback_admin_list_users(call):
 @bot.callback_query_handler(func=lambda call: call.data == "menu_home")
 def callback_home(call):
     user_id = call.from_user.id
+    user_states.pop(user_id, None)
     u = database.get_user(user_id)
     bal = u["balance"] if u else 0
     first_name = call.from_user.first_name
@@ -1315,7 +1397,7 @@ def handle_text_inputs(message):
 
     # Custom topup amount
     if action == "wait_custom_topup":
-        del user_states[user_id]
+        user_states.pop(user_id, None)
         try:
             amt = int(text)
             initiate_qris_payment(user_id, amt)
@@ -1326,7 +1408,7 @@ def handle_text_inputs(message):
     elif action == "wait_username_monthly":
         proto = state["proto"]
         price = state["price"]
-        del user_states[user_id]
+        user_states.pop(user_id, None)
 
         if not re_valid_username(text):
             bot.send_message(user_id, "❌ Username hanya boleh berisi huruf dan angka (3-15 karakter), tanpa simbol atau spasi.")
@@ -1359,7 +1441,7 @@ def handle_text_inputs(message):
     elif action == "wait_username_payg":
         proto = state["proto"]
         daily_price = state["daily_price"]
-        del user_states[user_id]
+        user_states.pop(user_id, None)
 
         if not re_valid_username(text):
             bot.send_message(user_id, "❌ Username hanya boleh berisi huruf dan angka (3-15 karakter), tanpa simbol atau spasi.")
@@ -1392,7 +1474,9 @@ def handle_text_inputs(message):
 
     # Broadcast message (admin)
     elif action == "wait_broadcast":
-        del user_states[user_id]
+        user_states.pop(user_id, None)
+        if not is_admin(user_id):
+            return
         users = database.get_all_users()
         sent = 0
         wait_msg = bot.send_message(user_id, f"⏳ <i>Mengirim broadcast ke {len(users)} pengguna...</i>")
@@ -1407,15 +1491,23 @@ def handle_text_inputs(message):
 
     # Add saldo (admin)
     elif action == "wait_addsaldo":
-        del user_states[user_id]
+        user_states.pop(user_id, None)
+        if not is_admin(user_id):
+            return
         parts = text.split()
         if len(parts) != 2:
             bot.send_message(user_id, "Format salah. Gunakan: <code>user_id jumlah</code>")
             return
-        target_uid, amount = parts[0], parts[1]
+        target_uid, amount_str = parts[0], parts[1]
         try:
             target_uid = int(target_uid)
-            amount = int(amount)
+            amount = int(amount_str)
+            if amount <= 0:
+                bot.send_message(user_id, "❌ Jumlah saldo harus lebih besar dari 0.")
+                return
+            if amount > 100_000_000:
+                bot.send_message(user_id, "❌ Jumlah saldo maksimal Rp 100.000.000 per penambahan.")
+                return
             new_bal = database.add_balance(target_uid, amount)
             bot.send_message(user_id, f"✅ Berhasil menambahkan Rp {amount:,} ke user {target_uid}. Saldo sekarang: Rp {new_bal:,}")
             try:
@@ -1425,9 +1517,11 @@ def handle_text_inputs(message):
         except ValueError:
             bot.send_message(user_id, "ID dan Jumlah harus berupa angka.")
 
-    # Custom rule IP
+    # Custom rule IP (admin)
     elif action == "wait_custom_rule_ip":
-        del user_states[user_id]
+        user_states.pop(user_id, None)
+        if not is_admin(user_id):
+            return
         m = re.search(r'\d+', text)
         if m:
             val = int(m.group())
@@ -1436,9 +1530,11 @@ def handle_text_inputs(message):
         else:
             bot.send_message(user_id, "Masukkan angka yang valid (contoh: 1 atau 2).")
 
-    # Custom rule Quota
+    # Custom rule Quota (admin)
     elif action == "wait_custom_rule_quota":
-        del user_states[user_id]
+        user_states.pop(user_id, None)
+        if not is_admin(user_id):
+            return
         if "unlimited" in text.lower():
             val = 0
         else:
@@ -1452,9 +1548,11 @@ def handle_text_inputs(message):
         else:
             bot.send_message(user_id, "Masukkan angka kuota yang valid dalam GB (contoh: 350) atau ketik 'unlimited'.")
 
-    # Custom rule Suspend
+    # Custom rule Suspend (admin)
     elif action == "wait_custom_rule_suspend":
-        del user_states[user_id]
+        user_states.pop(user_id, None)
+        if not is_admin(user_id):
+            return
         m = re.search(r'\d+', text)
         if m:
             val = int(m.group())
@@ -1463,9 +1561,11 @@ def handle_text_inputs(message):
         else:
             bot.send_message(user_id, "Masukkan angka menit yang valid (contoh: 10).")
 
-    # Change monthly price
+    # Change monthly price (admin)
     elif action == "wait_price_monthly":
-        del user_states[user_id]
+        user_states.pop(user_id, None)
+        if not is_admin(user_id):
+            return
         clean_text = text.replace(".", "").replace(",", "")
         m = re.search(r'\d+', clean_text)
         if m:
@@ -1475,9 +1575,11 @@ def handle_text_inputs(message):
         else:
             bot.send_message(user_id, "Masukkan nominal harga yang valid (contoh: 8000).")
 
-    # Change PAYG price
+    # Change PAYG price (admin)
     elif action == "wait_price_payg":
-        del user_states[user_id]
+        user_states.pop(user_id, None)
+        if not is_admin(user_id):
+            return
         nums = [int(x) for x in re.findall(r'\d+', text.replace(".", "").replace(",", ""))]
         if len(nums) >= 2:
             d_val = nums[0]
@@ -1488,9 +1590,11 @@ def handle_text_inputs(message):
         else:
             bot.send_message(user_id, "Format salah. Masukkan dua angka, contoh: <code>300 1000</code> (tarif harian tarif kuota 10gb)")
 
-    # Search user
+    # Search user (admin)
     elif action == "wait_search_vpn_user":
-        del user_states[user_id]
+        user_states.pop(user_id, None)
+        if not is_admin(user_id):
+            return
         acc = database.get_account_by_username(text)
         if not acc:
             bot.send_message(user_id, f"❌ Akun dengan username <code>{text}</code> tidak ditemukan.", reply_markup=main_menu_keyboard(user_id))
@@ -1513,10 +1617,12 @@ def handle_text_inputs(message):
         markup.add(types.InlineKeyboardButton("🔙 Panel Admin", callback_data="menu_admin"))
         bot.send_message(user_id, card_text, reply_markup=markup)
 
-    # Set user custom quota
+    # Set user custom quota (admin)
     elif action == "wait_user_custom_quota":
-        uname = state["uname"]
-        del user_states[user_id]
+        uname = state.get("uname")
+        user_states.pop(user_id, None)
+        if not is_admin(user_id):
+            return
         try:
             val = int(text)
             acc = database.get_account_by_username(uname)
@@ -1527,10 +1633,12 @@ def handle_text_inputs(message):
         except ValueError:
             bot.send_message(user_id, "Masukkan angka yang valid.")
 
-    # Set user custom IP limit
+    # Set user custom IP limit (admin)
     elif action == "wait_user_custom_ip":
-        uname = state["uname"]
-        del user_states[user_id]
+        uname = state.get("uname")
+        user_states.pop(user_id, None)
+        if not is_admin(user_id):
+            return
         try:
             val = int(text)
             acc = database.get_account_by_username(uname)
