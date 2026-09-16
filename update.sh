@@ -199,11 +199,13 @@ EOF
 systemctl enable dropbear >/dev/null 2>&1 || true
 systemctl restart dropbear >/dev/null 2>&1 || true
 
-wget -q -O /usr/local/bin/ws-stunnel "$REPO_RAW/files/ws-stunnel.py" || true
+wget -q -O /usr/local/bin/ws-stunnel "$REPO_RAW/files/ws-stunnel.py?v=$(date +%s)" 2>/dev/null || \
+curl -fsSL -o /usr/local/bin/ws-stunnel "$REPO_RAW/files/ws-stunnel.py?v=$(date +%s)" 2>/dev/null || true
 chmod +x /usr/local/bin/ws-stunnel 2>/dev/null || true
-wget -q -O /etc/systemd/system/ws-stunnel.service "$REPO_RAW/files/ws-stunnel.service" || true
+wget -q -O /etc/systemd/system/ws-stunnel.service "$REPO_RAW/files/ws-stunnel.service?v=$(date +%s)" 2>/dev/null || true
 systemctl daemon-reload >/dev/null 2>&1 || true
 systemctl enable --now ws-stunnel >/dev/null 2>&1 || true
+systemctl restart ws-stunnel >/dev/null 2>&1 || true
 ok "Dropbear & SSH WS Tunnel OK"
 
 ############################################

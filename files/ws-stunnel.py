@@ -70,8 +70,10 @@ def handle_client(client_sock, client_addr):
         client_sock.settimeout(15.0)
         initial_data = b""
         
-        # Read until double CRLF
+        # Read until double CRLF (or SSH banner for direct clients)
         while b"\r\n\r\n" not in initial_data:
+            if initial_data.startswith(b"SSH-"):
+                break
             chunk = client_sock.recv(4096)
             if not chunk:
                 break

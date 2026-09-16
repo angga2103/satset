@@ -140,7 +140,23 @@ if [ ! -s /etc/xray/isp ] || [ ! -s /etc/xray/city ]; then
     fi
 fi
 
-echo -e "${green}✓ Berkas Bot Store & Optimasi Jaringan berhasil diperbarui.${NC}"
+# Perbarui modul ws-stunnel (SSH WebSocket Tunnel)
+wget -q -O /usr/local/bin/ws-stunnel "${REPO}/files/ws-stunnel.py${CACHE_BUSTER}" 2>/dev/null || \
+curl -fsSL -o /usr/local/bin/ws-stunnel "${REPO}/files/ws-stunnel.py${CACHE_BUSTER}" 2>/dev/null || true
+chmod +x /usr/local/bin/ws-stunnel 2>/dev/null || true
+systemctl restart ws-stunnel 2>/dev/null || true
+
+# Perbarui konfigurasi Nginx jika domain ada
+if [ -f /etc/xray/domain ]; then
+    DOM=$(head -n1 /etc/xray/domain | tr -d ' \t\r\n')
+    if [ -n "$DOM" ]; then
+        wget -q -O /etc/nginx/conf.d/xray.conf "${REPO}/config/xray.conf${CACHE_BUSTER}" 2>/dev/null || true
+        sed -i "s/xxx/$DOM/g" /etc/nginx/conf.d/xray.conf 2>/dev/null || true
+        nginx -t >/dev/null 2>&1 && systemctl restart nginx >/dev/null 2>&1 || true
+    fi
+fi
+
+echo -e "${green}✓ Berkas Bot Store, SSH WS, & Optimasi Jaringan berhasil diperbarui.${NC}"
 
 echo -e "${y}[3/3] Memeriksa status service bot...${NC}"
 if systemctl is-active --quiet satset-bot 2>/dev/null; then
