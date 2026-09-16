@@ -241,7 +241,7 @@ function memasang_paket_dasar() {
       libevent-dev bc rsyslog dos2unix zlib1g-dev libssl-dev libsqlite3-dev sed dirmngr \
       libxml-parser-perl build-essential gcc g++ python3 htop lsof tar wget curl git \
       unzip p7zip-full libc6 util-linux msmtp-mta ca-certificates bsd-mailx \
-      netfilter-persistent net-tools gnupg lsb-release cmake screen xz-utils apt-transport-https dnsutils jq easy-rsa || true
+      dropbear netfilter-persistent net-tools gnupg lsb-release cmake screen xz-utils apt-transport-https dnsutils jq easy-rsa || true
     apt clean
     apt autoremove -y
     apt remove --purge -y exim4 ufw firewalld
@@ -388,6 +388,41 @@ LimitNOFILE=1000000
 WantedBy=multi-user.target
 EOF
     print_success "Konfigurasi Paket"
+}
+function memasang_ssh_tunnel(){
+    clear
+    print_install "Memasang Dropbear & SSH WebSocket Tunnel"
+    apt-get install -y dropbear >/dev/null 2>&1 || true
+    cat > /etc/default/dropbear <<'EOF'
+NO_START=0
+DROPBEAR_PORT=109
+DROPBEAR_EXTRA_ARGS="-p 143"
+DROPBEAR_BANNER="/etc/issue.net"
+DROPBEAR_RECEIVE_WINDOW=65536
+EOF
+    cat > /etc/issue.net <<'EOF'
+<font color="blue"><b>================================</b></font><br>
+<font color="green"><b>   SATSET PREMIUM TUNNELING SERVER   </b></font><br>
+<font color="blue"><b>================================</b></font><br>
+<font color="red"><b>TERMS OF SERVICE:</b></font><br>
+<font color="white"><b>- NO DDOs / SPAM / HACKING</b></font><br>
+<font color="white"><b>- NO TORRENT / P2P</b></font><br>
+<font color="white"><b>- MAX 2 DEVICES / MULTILOGIN</b></font><br>
+<font color="blue"><b>================================</b></font>
+EOF
+    systemctl enable dropbear >/dev/null 2>&1 || true
+    systemctl restart dropbear >/dev/null 2>&1 || true
+
+    mkdir -p /etc/ssh /detail/ssh /etc/limit/ssh/ip
+    touch /etc/ssh/.ssh.db
+
+    wget -q -O /usr/local/bin/ws-stunnel "${REPO}files/ws-stunnel.py" || true
+    chmod +x /usr/local/bin/ws-stunnel 2>/dev/null || true
+    wget -q -O /etc/systemd/system/ws-stunnel.service "${REPO}files/ws-stunnel.service" || true
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable ws-stunnel >/dev/null 2>&1 || true
+    systemctl restart ws-stunnel >/dev/null 2>&1 || true
+    print_success "Dropbear & SSH WebSocket Tunnel"
 }
 function setup_rc_local_ipv6(){
     clear
@@ -866,6 +901,7 @@ function mulai_penginstallan(){
     memasang_domain
     memasang_ssl
     memasang_xray
+    memasang_ssh_tunnel
     setup_rc_local_ipv6
     memasang_pembatas
     memasang_vnstat

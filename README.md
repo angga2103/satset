@@ -52,10 +52,12 @@ chmod +x setup.sh
 
 | Protokol | Transport | Port TLS / HTTPS | Port Non-TLS / HTTP |
 | :--- | :--- | :--- | :--- |
+| **SSH & WebSocket** | Direct, Dropbear, Stunnel, WS-Proxy | 443, 777, 8443, 2053, 2083, 2087, 2096 | 22 (SSH), 109, 143 (Dropbear), 80, 8080, 8880 |
 | **VMess** | WebSocket (WS) & gRPC | 443, 444, 8443, 2053, 2083, 2087, 2096 | 80, 8080, 8880, 2052, 2082, 2086, 2095 |
 | **VLess** | WebSocket (WS) & gRPC | 443, 444, 8443, 2053, 2083, 2087, 2096 | 80, 8080, 8880, 2052, 2082, 2086, 2095 |
 | **Trojan** | WebSocket (WS) & gRPC | 443, 444, 8443, 2053, 2083, 2087, 2096 | - |
 | **Shadowsocks** | WebSocket (WS) & gRPC | 443, 444, 8443, 2053, 2083, 2087, 2096 | 80, 8080, 8880, 2052, 2082, 2086, 2095 |
+| **BadVPN / UDP-GW**| UDP Tunnel (Gaming/VoIP) | - | 7100, 7200, 7300 |
 | **Web Server** | Nginx Direct (Web Page) | 81 (SSL) | - |
 
 ---
@@ -82,8 +84,10 @@ chmod +x setup.sh
 
 ## ✨ Fitur Utama
 
+- **Multi-Protokol Lengkap**: Mendukung SSH Tunneling, Dropbear, Stunnel SSL, SSH WebSocket, VMess, VLess, Trojan, dan Shadowsocks.
+- **WebSocket SSH Terintegrasi**: Menggunakan daemon `ws-stunnel` berkecepatan tinggi yang kompatibel penuh dengan HTTP Custom, HTTP Injector, OpenTunnel, NetMod, dll.
 - **Core Modern**: Menggunakan Xray-core v25.x dengan dukungan protokol TLS 1.3, multiplexing, dan gRPC stream.
-- **Nginx Reverse Proxy Terpadu**: Pemisahan jalur path WebSocket (`/vmess`, `/vless`, `/trojan-ws`, `/ss-ws`) dan gRPC service name yang aman dan teruji.
+- **Nginx Reverse Proxy Terpadu**: Pemisahan jalur path WebSocket (`/`, `/vmess`, `/vless`, `/trojan-ws`, `/ss-ws`) dan gRPC service name yang aman dan teruji.
 - **Auto SSL & Fallback Resilient**: Ditenagai oleh `acme.sh` resmi dengan penyedia Let's Encrypt, serta *self-signed fallback* darurat agar layanan web dan proxy tidak pernah *crash* saat DNS domain masih masa propagasi.
 - **Pembatasan Kuota & IP Real-time**: Service otomatis per menit untuk memantau pemakaian kuota dan mengunci akun pengguna yang melebihi batas login (*anti multi-login*).
 - **Notifikasi Bot Telegram**: Notifikasi instan ke grup/channel admin ketika ada pengguna yang terkunci, masa aktif habis, atau limit kuota tercapai.
@@ -97,6 +101,12 @@ chmod +x setup.sh
 Ketik perintah berikut langsung di terminal VPS Anda:
 
 - `menu` : Membuka Menu Utama VPS
+- `m-ssh` : Kelola Akun SSH & WebSocket (addssh, trialssh, renewssh, delssh, cekssh)
+- `addssh` : Buat Akun SSH & WebSocket Baru
+- `trialssh` : Buat Akun SSH Trial 1 Hari
+- `delssh` : Hapus Akun SSH
+- `renewssh` : Perpanjang Masa Aktif Akun SSH
+- `cekssh` : Cek Pengguna SSH yang Sedang Login Online
 - `m-vmess` : Kelola Akun VMess (Buat Akun, Trial, Cek Login, Perpanjang, Hapus)
 - `m-vless` : Kelola Akun VLess
 - `m-trojan` : Kelola Akun Trojan
@@ -121,8 +131,8 @@ Repository ini dilengkapi dengan bot Telegram otomatis untuk jualan akun tunneli
    - Verifikasi otomatis ganda: background worker mendeteksi pembayaran sukses dan langsung mengkredit saldo pengguna secara *real-time*.
 2. **Paket Bulanan Standar**:
    - Pembelian akun 30 hari seharga **Rp 8.000 / akun**.
-   - Mendukung 4 protokol: **VMess**, **VLess**, **Trojan**, dan **Shadowsocks**.
-   - Auto-create akun Xray langsung di server dan mengirimkan link TLS, Non-TLS, gRPC, serta format konfigurasi siap pakai.
+   - Mendukung 5 protokol: **SSH & WebSocket**, **VMess**, **VLess**, **Trojan**, dan **Shadowsocks**.
+   - Auto-create akun langsung di server dan mengirimkan detail akun (host, port, user, pass, payload) serta link config siap pakai.
 3. **Fitur Pay-As-You-Go (PAYG)**:
    - Skema fleksibel tanpa komitmen sebulan: pengguna hanya membayar harian sebesar **Rp 300 / hari**.
    - Sistem melakukan auto-debet saldo secara otomatis setiap pergantian hari (00:00 WIB).

@@ -232,11 +232,13 @@ def callback_buy_monthly(call):
     bal = database.get_balance(user_id)
     
     markup = types.InlineKeyboardMarkup(row_width=2)
+    b0 = types.InlineKeyboardButton("🔑 SSH & WebSocket", callback_data="buy_monthly_ssh")
     b1 = types.InlineKeyboardButton("🚀 VMess (WS / gRPC)", callback_data="buy_monthly_vmess")
     b2 = types.InlineKeyboardButton("⚡ VLess (WS / gRPC)", callback_data="buy_monthly_vless")
     b3 = types.InlineKeyboardButton("🛡️ Trojan (WS / gRPC)", callback_data="buy_monthly_trojan")
     b4 = types.InlineKeyboardButton("🔒 Shadowsocks", callback_data="buy_monthly_shadowsocks")
     b_back = types.InlineKeyboardButton("🔙 Menu Utama", callback_data="menu_home")
+    markup.add(b0)
     markup.add(b1, b2)
     markup.add(b3, b4)
     markup.add(b_back)
@@ -245,7 +247,7 @@ def callback_buy_monthly(call):
         f"🛒 <b>BELI PAKET BULANAN (30 HARI)</b>\n\n"
         f"Harga: <b>Rp {price:,} / 30 Hari</b>\n"
         f"Saldo Anda: <b>Rp {bal:,}</b>\n\n"
-        f"✨ <i>Fitur:</i> Kuota Unlimited, High Speed, Port TLS & Non-TLS, Support Clash & OpenClash.\n\n"
+        f"✨ <i>Fitur:</i> Kuota Unlimited, High Speed, Port TLS & Non-TLS, Support SSH, Xray & Clash.\n\n"
         f"Silakan pilih protokol yang diinginkan:"
     )
     bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
@@ -296,11 +298,13 @@ def callback_buy_payg(call):
     bal = database.get_balance(user_id)
     
     markup = types.InlineKeyboardMarkup(row_width=2)
+    b0 = types.InlineKeyboardButton("🔑 SSH PAYG", callback_data="buy_payg_ssh")
     b1 = types.InlineKeyboardButton("🚀 VMess PAYG", callback_data="buy_payg_vmess")
     b2 = types.InlineKeyboardButton("⚡ VLess PAYG", callback_data="buy_payg_vless")
     b3 = types.InlineKeyboardButton("🛡️ Trojan PAYG", callback_data="buy_payg_trojan")
     b4 = types.InlineKeyboardButton("🔒 Shadowsocks PAYG", callback_data="buy_payg_shadowsocks")
     b_back = types.InlineKeyboardButton("🔙 Menu Utama", callback_data="menu_home")
+    markup.add(b0)
     markup.add(b1, b2)
     markup.add(b3, b4)
     markup.add(b_back)
@@ -362,11 +366,13 @@ def callback_trial(call):
         return
 
     markup = types.InlineKeyboardMarkup(row_width=2)
+    b0 = types.InlineKeyboardButton("🔑 SSH Trial", callback_data="take_trial_ssh")
     b1 = types.InlineKeyboardButton("🚀 VMess Trial", callback_data="take_trial_vmess")
     b2 = types.InlineKeyboardButton("⚡ VLess Trial", callback_data="take_trial_vless")
     b3 = types.InlineKeyboardButton("🛡️ Trojan Trial", callback_data="take_trial_trojan")
     b4 = types.InlineKeyboardButton("🔒 Shadowsocks Trial", callback_data="take_trial_shadowsocks")
     b_back = types.InlineKeyboardButton("🔙 Menu Utama", callback_data="menu_home")
+    markup.add(b0)
     markup.add(b1, b2)
     markup.add(b3, b4)
     markup.add(b_back)
@@ -433,17 +439,40 @@ def callback_account_detail(call):
         return
 
     domain = xray_manager.get_domain()
-    text = (
-        f"📱 <b>DETAIL AKUN VPN</b>\n\n"
-        f"Protokol: <b>{acc['protocol'].upper()}</b>\n"
-        f"Username: <code>{acc['vpn_username']}</code>\n"
-        f"UUID / Password: <code>{acc['uuid']}</code>\n"
-        f"Paket: <b>{acc['plan_type'].upper()}</b>\n"
-        f"Expired: <b>{acc['exp_date']}</b>\n"
-        f"Domain: <code>{domain}</code>\n\n"
-        f"🔗 <b>Config Link:</b>\n"
-        f"<code>{acc['config_link']}</code>"
-    )
+    proto = acc['protocol'].upper()
+    uname = acc['vpn_username']
+    pwd = acc['uuid']
+
+    if acc['protocol'].lower() in ["ssh", "openssh", "dropbear"]:
+        payload = f"GET / HTTP/1.1[crlf]Host: {domain}[crlf]Upgrade: websocket[crlf][crlf]"
+        text = (
+            f"📱 <b>DETAIL AKUN SSH & WEBSOCKET</b>\n\n"
+            f"Username      : <code>{uname}</code>\n"
+            f"Password      : <code>{pwd}</code>\n"
+            f"Domain / Host : <code>{domain}</code>\n"
+            f"Port OpenSSH  : <code>22</code>\n"
+            f"Port Dropbear : <code>109, 143</code>\n"
+            f"Port SSL/TLS  : <code>443, 777</code>\n"
+            f"Port WS NonTLS: <code>80, 8080, 8880</code>\n"
+            f"Port WS TLS   : <code>443, 8443</code>\n"
+            f"BadVPN UDP GW : <code>7100, 7200, 7300</code>\n"
+            f"Paket         : <b>{acc['plan_type'].upper()}</b>\n"
+            f"Expired       : <b>{acc['exp_date']}</b>\n\n"
+            f"🔗 <b>Payload WebSocket:</b>\n"
+            f"<code>{payload}</code>"
+        )
+    else:
+        text = (
+            f"📱 <b>DETAIL AKUN VPN</b>\n\n"
+            f"Protokol: <b>{proto}</b>\n"
+            f"Username: <code>{uname}</code>\n"
+            f"UUID / Password: <code>{pwd}</code>\n"
+            f"Paket: <b>{acc['plan_type'].upper()}</b>\n"
+            f"Expired: <b>{acc['exp_date']}</b>\n"
+            f"Domain: <code>{domain}</code>\n\n"
+            f"🔗 <b>Config Link:</b>\n"
+            f"<code>{acc['config_link']}</code>"
+        )
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("🔙 Kembali ke Daftar Akun", callback_data="menu_my_accounts"))
     bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
@@ -692,26 +721,49 @@ def send_account_details(user_id: int, acc: dict, title: str):
     uuid_str = acc["uuid"]
     exp_h = acc.get("exp_human", acc.get("exp_date", ""))
     
-    text = (
-        f"<b>{title}</b>\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"<b>Remarks / User:</b> <code>{uname}</code>\n"
-        f"<b>Protokol:</b> <code>{proto}</code>\n"
-        f"<b>Domain / Host:</b> <code>{domain}</code>\n"
-        f"<b>Port TLS:</b> <code>443, 8443</code>\n"
-        f"<b>Port Non-TLS:</b> <code>80, 8080, 8880</code>\n"
-        f"<b>UUID / Password:</b> <code>{uuid_str}</code>\n"
-        f"<b>Masa Aktif:</b> <code>{exp_h}</code>\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"🔗 <b>LINK CONFIG:</b>\n"
-    )
+    if acc["protocol"].lower() in ["ssh", "openssh", "dropbear"]:
+        ip_srv = acc.get("ip_server", domain)
+        pwd = acc.get("password", uuid_str)
+        payload = acc.get("payload_ws", f"GET / HTTP/1.1[crlf]Host: {domain}[crlf]Upgrade: websocket[crlf][crlf]")
+        text = (
+            f"<b>{title}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"<b>Username      :</b> <code>{uname}</code>\n"
+            f"<b>Password      :</b> <code>{pwd}</code>\n"
+            f"<b>Domain / Host :</b> <code>{domain}</code>\n"
+            f"<b>IP Server     :</b> <code>{ip_srv}</code>\n"
+            f"<b>Port OpenSSH  :</b> <code>22</code>\n"
+            f"<b>Port Dropbear :</b> <code>109, 143</code>\n"
+            f"<b>Port SSL/TLS  :</b> <code>443, 777</code>\n"
+            f"<b>Port WS NonTLS:</b> <code>80, 8080, 8880</code>\n"
+            f"<b>Port WS TLS   :</b> <code>443, 8443</code>\n"
+            f"<b>BadVPN UDP GW :</b> <code>7100, 7200, 7300</code>\n"
+            f"<b>Masa Aktif    :</b> <code>{exp_h}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🔗 <b>Payload WebSocket:</b>\n"
+            f"<code>{payload}</code>\n"
+        )
+    else:
+        text = (
+            f"<b>{title}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"<b>Remarks / User:</b> <code>{uname}</code>\n"
+            f"<b>Protokol      :</b> <code>{proto}</code>\n"
+            f"<b>Domain / Host :</b> <code>{domain}</code>\n"
+            f"<b>Port TLS      :</b> <code>443, 8443</code>\n"
+            f"<b>Port Non-TLS  :</b> <code>80, 8080, 8880</code>\n"
+            f"<b>UUID / Key    :</b> <code>{uuid_str}</code>\n"
+            f"<b>Masa Aktif    :</b> <code>{exp_h}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🔗 <b>LINK CONFIG:</b>\n"
+        )
 
-    if acc.get("link_tls"):
-        text += f"\n<b>TLS (Port 443):</b>\n<code>{acc['link_tls']}</code>\n"
-    if acc.get("link_ntls"):
-        text += f"\n<b>Non-TLS (Port 80):</b>\n<code>{acc['link_ntls']}</code>\n"
-    if acc.get("link_grpc"):
-        text += f"\n<b>gRPC (Port 443):</b>\n<code>{acc['link_grpc']}</code>\n"
+        if acc.get("link_tls"):
+            text += f"\n<b>TLS (Port 443):</b>\n<code>{acc['link_tls']}</code>\n"
+        if acc.get("link_ntls"):
+            text += f"\n<b>Non-TLS (Port 80):</b>\n<code>{acc['link_ntls']}</code>\n"
+        if acc.get("link_grpc"):
+            text += f"\n<b>gRPC (Port 443):</b>\n<code>{acc['link_grpc']}</code>\n"
 
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("🔙 Menu Utama", callback_data="menu_home"))

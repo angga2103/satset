@@ -48,17 +48,37 @@ def restart_xray() -> bool:
     return True
 
 def username_exists(username: str) -> bool:
-    """Check if username already exists in Xray config"""
-    if not os.path.exists(CONFIG_FILE):
-        return False
-    try:
-        with open(CONFIG_FILE, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-            # Look for username marker or email
-            pattern = rf'"{re.escape(username)}"'
-            return bool(re.search(pattern, content))
-    except Exception:
-        return False
+    """Check if username already exists in Xray config or system users"""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+                pattern = rf'"{re.escape(username)}"'
+                if re.search(pattern, content):
+                    return True
+        except Exception:
+            pass
+
+    if os.path.exists("/etc/passwd"):
+        try:
+            with open("/etc/passwd", "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if line.startswith(f"{username}:"):
+                        return True
+        except Exception:
+            pass
+
+    if os.path.exists("/etc/ssh/.ssh.db"):
+        try:
+            with open("/etc/ssh/.ssh.db", "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) >= 2 and parts[1] == username:
+                        return True
+        except Exception:
+            pass
+
+    return False
 
 def inject_xray_config(marker: str, entry_lines: list) -> bool:
     """Inject configuration lines directly after a marker in config.json"""
@@ -329,6 +349,110 @@ def create_shadowsocks(username: str, days: int = 30, quota_gb: int = 0, ip_limi
         "primary_link": link_tls
     }
 
+def create_ssh(username: str, password: str = None, days: int = 30, ip_limit: int = 2) -> dict:
+    domain = get_domain()
+    ip_server = domain
+    if os.path.exists(IP_FILE):
+        try:
+            with open(IP_FILE, "r") as f:
+                ip_server = f.read().strip() or domain
+        except Exception:
+            pass
+
+    if not password:
+        password = "sat" + "".join(re.findall(r"[0-9]", str(uuid_pkg.uuid4())))[:5]
+
+    now = datetime.datetime.now()
+    exp_date = (now + datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+    exp_human = (now + datetime.timedelta(days=days)).strftime("%d %b, %Y")
+
+    if os.path.exists("/usr/sbin/useradd") or os.path.exists("/sbin/useradd"):
+        try:
+            subprocess.run(
+                ["useradd", "-e", exp_date, "-s", "/bin/false", "-M", username],
+                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            p = subprocess.Popen(["chpasswd"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            p.communicate(input=f"{username}:{password}".encode())
+        except Exception as e:
+            logger.error(f"Failed to create system user {username}: {e}")
+
+    os.makedirs("/etc/ssh", exist_ok=True)
+    os.makedirs("/detail/ssh", exist_ok=True)
+    os.makedirs("/etc/limit/ssh/ip", exist_ok=True)
+
+    db_path = "/etc/ssh/.ssh.db"
+    try:
+        if os.path.exists(db_path):
+            with open(db_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+            new_lines = [l for l in lines if not l.startswith(f"### {username} ")]
+            with open(db_path, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+        with open(db_path, "a", encoding="utf-8") as f:
+            f.write(f"### {username} {exp_date} {password} {ip_limit}\n")
+    except Exception as e:
+        logger.error(f"Failed to save to {db_path}: {e}")
+
+    try:
+        with open(f"/etc/limit/ssh/ip/{username}", "w") as f:
+            f.write(str(ip_limit))
+    except Exception:
+        pass
+
+    payload_ws = f"GET / HTTP/1.1[crlf]Host: {domain}[crlf]Upgrade: websocket[crlf][crlf]"
+    ssh_link = f"ssh://{username}:{password}@{domain}:443"
+
+    return {
+        "protocol": "ssh",
+        "username": username,
+        "password": password,
+        "uuid": password,
+        "domain": domain,
+        "ip_server": ip_server,
+        "exp_date": exp_date,
+        "exp_human": exp_human,
+        "quota_gb": 0,
+        "ip_limit": ip_limit,
+        "port_openssh": "22",
+        "port_dropbear": "109, 143",
+        "port_ssl": "443, 777",
+        "port_ws_ntls": "80, 8080, 8880",
+        "port_ws_tls": "443, 8443",
+        "port_badvpn": "7100, 7200, 7300",
+        "payload_ws": payload_ws,
+        "link_tls": ssh_link,
+        "link_ntls": ssh_link,
+        "link_grpc": "",
+        "primary_link": ssh_link
+    }
+
+def delete_ssh(username: str) -> bool:
+    if os.path.exists("/usr/sbin/userdel") or os.path.exists("/sbin/userdel"):
+        try:
+            subprocess.run(["userdel", "-f", username], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+    db_path = "/etc/ssh/.ssh.db"
+    if os.path.exists(db_path):
+        try:
+            with open(db_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+            new_lines = [l for l in lines if not l.startswith(f"### {username} ")]
+            with open(db_path, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+        except Exception:
+            pass
+
+    for fpath in [f"/detail/ssh/{username}.txt", f"/etc/limit/ssh/ip/{username}"]:
+        if os.path.exists(fpath):
+            try:
+                os.remove(fpath)
+            except Exception:
+                pass
+    return True
+
 def create_account(protocol: str, username: str, days: int = 30, quota_gb: int = 0, ip_limit: int = 2) -> dict:
     protocol = protocol.lower()
     if protocol == "vmess":
@@ -339,11 +463,16 @@ def create_account(protocol: str, username: str, days: int = 30, quota_gb: int =
         return create_trojan(username, days, quota_gb, ip_limit)
     elif protocol in ["shadowsocks", "ss"]:
         return create_shadowsocks(username, days, quota_gb, ip_limit)
+    elif protocol in ["ssh", "openssh", "dropbear"]:
+        return create_ssh(username, days=days, ip_limit=ip_limit)
     else:
         raise ValueError(f"Protokol tidak didukung: {protocol}")
 
 def delete_account(protocol: str, username: str) -> bool:
     protocol = protocol.lower()
+    if protocol in ["ssh", "openssh", "dropbear"]:
+        return delete_ssh(username)
+
     remove_xray_config(protocol, username)
 
     # Clean files

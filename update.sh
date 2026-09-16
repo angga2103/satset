@@ -63,7 +63,7 @@ apt install -y \
   net-tools iproute2 \
   nginx cron \
   iptables iptables-persistent \
-  fail2ban vnstat rsyslog \
+  fail2ban vnstat rsyslog dropbear \
   software-properties-common
 ok "Paket dasar OK"
 
@@ -72,8 +72,10 @@ ok "Paket dasar OK"
 ############################################
 info "Menyiapkan direktori"
 mkdir -p /etc/xray /var/log/xray /var/www/html
-mkdir -p /etc/{vmess,vless,trojan,shadowsocks,bot}
-mkdir -p /etc/limit/{vmess,vless,trojan,shadowsocks}/{ip,}
+mkdir -p /etc/{vmess,vless,trojan,shadowsocks,ssh,bot}
+mkdir -p /etc/limit/{vmess,vless,trojan,shadowsocks,ssh}/{ip,}
+mkdir -p /detail/{vmess,vless,trojan,shadowsocks,ssh}
+touch /etc/ssh/.ssh.db
 mkdir -p /etc/user-create /usr/local/sbin /usr/local/bin
 touch /etc/xray/domain /var/log/xray/{access.log,error.log}
 chown -R www-data:www-data /var/log/xray
@@ -130,6 +132,37 @@ rm -f /etc/nginx/sites-enabled/default
 nginx -t
 systemctl restart nginx
 ok "Nginx OK"
+
+############################################
+# DROPBEAR & SSH WEBSOCKET TUNNEL
+############################################
+info "Setup Dropbear & SSH WebSocket Tunnel"
+cat > /etc/default/dropbear <<'EOF'
+NO_START=0
+DROPBEAR_PORT=109
+DROPBEAR_EXTRA_ARGS="-p 143"
+DROPBEAR_BANNER="/etc/issue.net"
+DROPBEAR_RECEIVE_WINDOW=65536
+EOF
+cat > /etc/issue.net <<'EOF'
+<font color="blue"><b>================================</b></font><br>
+<font color="green"><b>   SATSET PREMIUM TUNNELING SERVER   </b></font><br>
+<font color="blue"><b>================================</b></font><br>
+<font color="red"><b>TERMS OF SERVICE:</b></font><br>
+<font color="white"><b>- NO DDOs / SPAM / HACKING</b></font><br>
+<font color="white"><b>- NO TORRENT / P2P</b></font><br>
+<font color="white"><b>- MAX 2 DEVICES / MULTILOGIN</b></font><br>
+<font color="blue"><b>================================</b></font>
+EOF
+systemctl enable dropbear >/dev/null 2>&1 || true
+systemctl restart dropbear >/dev/null 2>&1 || true
+
+wget -q -O /usr/local/bin/ws-stunnel "$REPO_RAW/files/ws-stunnel.py" || true
+chmod +x /usr/local/bin/ws-stunnel 2>/dev/null || true
+wget -q -O /etc/systemd/system/ws-stunnel.service "$REPO_RAW/files/ws-stunnel.service" || true
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl enable --now ws-stunnel >/dev/null 2>&1 || true
+ok "Dropbear & SSH WS Tunnel OK"
 
 ############################################
 # FIREWALL LIMIT
@@ -205,5 +238,5 @@ ok "Menu & Bot Store OK"
 # FINAL
 ############################################
 systemctl daemon-reload
-systemctl enable --now nginx xray cron vnstat
+systemctl enable --now nginx xray cron vnstat dropbear ws-stunnel
 ok "SETUP SELESAI — Reboot disarankan"
