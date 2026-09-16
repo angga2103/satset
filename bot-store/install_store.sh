@@ -101,8 +101,10 @@ PAKASIR_API_KEY=${input_key}
 PRICE_MONTHLY=${input_monthly}
 PRICE_PAYG_DAILY=${input_payg}
 PRICE_PAYG_10GB=1000
-DEFAULT_IP_LIMIT=2
-DEFAULT_QUOTA_GB=0
+DEFAULT_IP_LIMIT=1
+DEFAULT_QUOTA_GB=350
+SUSPEND_DURATION_MINUTES=10
+AUTO_SUSPEND_ENABLED=1
 CURRENCY=Rp
 EOF
     chmod 600 "$ENV_FILE"
@@ -150,9 +152,12 @@ while true; do
     echo -e " [3] Edit Pengaturan Bot & Pakasir (/etc/satset/bot.env)"
     echo -e " [4] Lihat Database Transaksi & Pengguna"
     echo -e " [5] Jalankan Uji Coba Cek Pakasir"
+    echo -e " [6] Kelola Rules Dinamis (IP, Kuota, Suspen, Harga)"
+    echo -e " [7] Live Monitor User Login & Kuota Pemakaian"
+    echo -e " [8] Daftar & Buka Kunci Akun Terkunci (Unban)"
     echo -e " [0] Keluar"
     echo -e "${BLUE}====================================================${NC}"
-    read -rp "Pilih menu [0-5]: " opt
+    read -rp "Pilih menu [0-8]: " opt
     case "$opt" in
         1)
             journalctl -u satset-bot -f -n 50
@@ -173,6 +178,70 @@ while true; do
             ;;
         5)
             /etc/satset/venv/bin/python -c "import sys; sys.path.append('/etc/satset/bot-store'); import pakasir; print(pakasir.check_transaction('TEST'))"
+            read -rp "Tekan Enter untuk kembali..."
+            ;;
+        6)
+            /etc/satset/venv/bin/python -c "
+import sys; sys.path.append('/etc/satset/bot-store')
+import config
+print(config.get_rules_summary().replace('<b>','').replace('</b>','').replace('<code>','').replace('</code>',''))
+"
+            echo ""
+            echo " [1] Ubah Limit IP Default"
+            echo " [2] Ubah Limit Kuota Default (GB)"
+            echo " [3] Ubah Durasi Suspen (Menit)"
+            echo " [4] Ubah Harga Paket Bulanan"
+            echo " [5] Ubah Tarif PAYG Harian"
+            echo " [0] Kembali"
+            read -rp "Pilih opsi [0-5]: " r_opt
+            case "$r_opt" in
+                1) read -rp "Limit IP baru: " nip; /etc/satset/venv/bin/python -c "import sys; sys.path.append('/etc/satset/bot-store'); import config; config.update_config_key('DEFAULT_IP_LIMIT', int('$nip')); print('Limit IP berhasil diubah!')" ;;
+                2) read -rp "Limit Kuota baru (GB, 0=unlimited): " nq; /etc/satset/venv/bin/python -c "import sys; sys.path.append('/etc/satset/bot-store'); import config; config.update_config_key('DEFAULT_QUOTA_GB', int('$nq')); print('Limit Kuota berhasil diubah!')" ;;
+                3) read -rp "Durasi suspen baru (menit): " ns; /etc/satset/venv/bin/python -c "import sys; sys.path.append('/etc/satset/bot-store'); import config; config.update_config_key('SUSPEND_DURATION_MINUTES', int('$ns')); print('Durasi suspen berhasil diubah!')" ;;
+                4) read -rp "Harga Bulanan baru (Rp): " npm; /etc/satset/venv/bin/python -c "import sys; sys.path.append('/etc/satset/bot-store'); import config; config.update_config_key('PRICE_MONTHLY', int('$npm')); print('Harga bulanan berhasil diubah!')" ;;
+                5) read -rp "Tarif PAYG Harian baru (Rp): " npp; /etc/satset/venv/bin/python -c "import sys; sys.path.append('/etc/satset/bot-store'); import config; config.update_config_key('PRICE_PAYG_DAILY', int('$npp')); print('Tarif PAYG berhasil diubah!')" ;;
+            esac
+            read -rp "Tekan Enter untuk kembali..."
+            ;;
+        7)
+            /etc/satset/venv/bin/python -c "
+import sys; sys.path.append('/etc/satset/bot-store')
+import xray_manager, database
+active = xray_manager.get_active_sessions()
+print(f'=== LIVE SESSIONS ({len(active)} ONLINE) ===')
+if not active:
+    print('Tidak ada user yang sedang aktif login.')
+for u, ips in active.items():
+    st = xray_manager.get_user_usage_and_status(u)
+    print(f'* {u} ({st[\"protocol\"].upper()}): {len(ips)}/{st[\"ip_limit\"]} IP | Kuota: {st[\"used_human\"]} / {st[\"quota_human\"]} ({st[\"percent\"]:.1f}%)')
+    print(f'  IP: {\", \".join(ips)}')
+"
+            read -rp "Tekan Enter untuk kembali..."
+            ;;
+        8)
+            /etc/satset/venv/bin/python -c "
+import sys; sys.path.append('/etc/satset/bot-store')
+import database, xray_manager
+locked = database.get_locked_accounts()
+print(f'=== AKUN TERKUNCI / SUSPEND ({len(locked)}) ===')
+if not locked:
+    print('Tidak ada akun terkunci.')
+for idx, acc in enumerate(locked, 1):
+    st = xray_manager.get_user_usage_and_status(acc['vpn_username'], acc['protocol'])
+    print(f'[{idx}] {acc[\"vpn_username\"]} ({acc[\"protocol\"]}) | Alasan: {acc.get(\"lock_reason\")} | Sisa: {st.get(\"remaining_human\")}')
+"
+            echo ""
+            read -rp "Masukkan username yang ingin di-unban (atau kosongkan untuk batal): " unb_u
+            if [ -n "$unb_u" ]; then
+                /etc/satset/venv/bin/python -c "
+import sys; sys.path.append('/etc/satset/bot-store')
+import database, xray_manager
+acc = database.get_account_by_username('$unb_u')
+proto = acc.get('protocol', 'vmess') if acc else 'vmess'
+xray_manager.unsuspend_account(proto, '$unb_u')
+print('Akun $unb_u berhasil di-unban!')
+"
+            fi
             read -rp "Tekan Enter untuk kembali..."
             ;;
         0)

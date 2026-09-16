@@ -60,9 +60,25 @@ def init_db():
         exp_date TEXT,
         config_link TEXT,
         status TEXT DEFAULT 'active',
+        quota_gb INTEGER DEFAULT 350,
+        ip_limit INTEGER DEFAULT 1,
+        locked_until TEXT,
+        lock_reason TEXT,
         created_at TEXT
     )
     """)
+
+    # Safe column migrations for existing databases
+    for col, col_def in [
+        ("quota_gb", "INTEGER DEFAULT 350"),
+        ("ip_limit", "INTEGER DEFAULT 1"),
+        ("locked_until", "TEXT"),
+        ("lock_reason", "TEXT")
+    ]:
+        try:
+            c.execute(f"ALTER TABLE vpn_accounts ADD COLUMN {col} {col_def}")
+        except Exception:
+            pass
     
     # Table: Pay-As-You-Go Subscriptions
     c.execute("""
@@ -195,14 +211,14 @@ def complete_transaction(order_id: str):
     conn.close()
     return dict(tx)
 
-def add_vpn_account(user_id: int, protocol: str, vpn_username: str, uuid: str, plan_type: str, exp_date: str, config_link: str):
+def add_vpn_account(user_id: int, protocol: str, vpn_username: str, uuid: str, plan_type: str, exp_date: str, config_link: str, quota_gb: int = 350, ip_limit: int = 1):
     conn = get_connection()
     c = conn.cursor()
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute("""
-    INSERT INTO vpn_accounts (user_id, protocol, vpn_username, uuid, plan_type, exp_date, config_link, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)
-    """, (user_id, protocol, vpn_username, uuid, plan_type, exp_date, config_link, now))
+    INSERT INTO vpn_accounts (user_id, protocol, vpn_username, uuid, plan_type, exp_date, config_link, status, quota_gb, ip_limit, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+    """, (user_id, protocol, vpn_username, uuid, plan_type, exp_date, config_link, quota_gb, ip_limit, now))
     conn.commit()
     conn.close()
 
@@ -275,5 +291,88 @@ def get_total_stats():
         "revenue": revenue
     }
 
+def get_account_by_username(vpn_username: str):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        SELECT v.*, u.username as tg_username, u.first_name as tg_first_name, u.balance
+        FROM vpn_accounts v
+        LEFT JOIN users u ON v.user_id = u.user_id
+        WHERE v.vpn_username = ?
+    """, (vpn_username,))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def update_account_rules(vpn_username: str, quota_gb: int = None, ip_limit: int = None):
+    conn = get_connection()
+    c = conn.cursor()
+    if quota_gb is not None:
+        c.execute("UPDATE vpn_accounts SET quota_gb = ? WHERE vpn_username = ?", (quota_gb, vpn_username))
+    if ip_limit is not None:
+        c.execute("UPDATE vpn_accounts SET ip_limit = ? WHERE vpn_username = ?", (ip_limit, vpn_username))
+    conn.commit()
+    conn.close()
+
+def lock_account_db(vpn_username: str, duration_minutes: int = 10, reason: str = "multi_login"):
+    conn = get_connection()
+    c = conn.cursor()
+    locked_until = (datetime.datetime.now() + datetime.timedelta(minutes=duration_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+    c.execute("""
+        UPDATE vpn_accounts 
+        SET status = 'suspended', locked_until = ?, lock_reason = ? 
+        WHERE vpn_username = ?
+    """, (locked_until, reason, vpn_username))
+    conn.commit()
+    conn.close()
+    return locked_until
+
+def unlock_account_db(vpn_username: str):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        UPDATE vpn_accounts 
+        SET status = 'active', locked_until = NULL, lock_reason = NULL 
+        WHERE vpn_username = ?
+    """, (vpn_username,))
+    conn.commit()
+    conn.close()
+
+def get_locked_accounts():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        SELECT v.*, u.username as tg_username, u.first_name as tg_first_name
+        FROM vpn_accounts v
+        LEFT JOIN users u ON v.user_id = u.user_id
+        WHERE v.status = 'suspended'
+    """)
+    rows = c.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_all_vpn_accounts_detailed(limit: int = 100):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        SELECT v.*, u.username as tg_username, u.first_name as tg_first_name, u.balance
+        FROM vpn_accounts v
+        LEFT JOIN users u ON v.user_id = u.user_id
+        ORDER BY v.id DESC
+        LIMIT ?
+    """, (limit,))
+    rows = c.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def delete_vpn_account_by_username(vpn_username: str):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM vpn_accounts WHERE vpn_username = ?", (vpn_username,))
+    c.execute("DELETE FROM payg_subscriptions WHERE vpn_username = ?", (vpn_username,))
+    conn.commit()
+    conn.close()
+
 # Initialize tables when imported
 init_db()
+

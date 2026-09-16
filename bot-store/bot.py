@@ -9,7 +9,7 @@ import telebot
 from telebot import types
 
 import qrcode
-from config import load_config, save_config
+from config import load_config, save_config, update_config_key, get_rules_summary
 import database
 import pakasir
 import xray_manager
@@ -399,11 +399,14 @@ def callback_take_trial(call):
 
     proto = call.data.replace("take_trial_", "")
     uname = f"trial{str(user_id)[-4:]}{int(time.time()) % 1000}"
+    cfg = load_config()
+    trial_quota = min(10, cfg.get("DEFAULT_QUOTA_GB", 350))
+    trial_ip = cfg.get("DEFAULT_IP_LIMIT", 1)
     
     wait_msg = bot.send_message(user_id, f"⏳ <i>Membuat akun Trial {proto.upper()}...</i>")
     try:
-        acc = xray_manager.create_account(proto, uname, days=1, quota_gb=0, ip_limit=2)
-        database.add_vpn_account(user_id, proto, uname, acc["uuid"], "trial", acc["exp_date"], acc["primary_link"])
+        acc = xray_manager.create_account(proto, uname, days=1, quota_gb=trial_quota, ip_limit=trial_ip)
+        database.add_vpn_account(user_id, proto, uname, acc["uuid"], "trial", acc["exp_date"], acc["primary_link"], quota_gb=trial_quota, ip_limit=trial_ip)
         bot.delete_message(user_id, wait_msg.message_id)
         send_account_details(user_id, acc, title="🎉 AKUN TRIAL 1 HARI BERHASIL DIBUAT")
     except Exception as e:
@@ -522,22 +525,482 @@ def callback_admin_menu(call):
         return
 
     stats = database.get_total_stats()
+    active_sessions = xray_manager.get_active_sessions()
+    locked_accs = database.get_locked_accounts()
+
     text = (
         f"🛠️ <b>ADMINISTRATOR PANEL</b>\n\n"
-        f"👥 Total Pengguna: <b>{stats['users']}</b>\n"
-        f"📱 Total Akun Dibuat: <b>{stats['accounts']}</b>\n"
-        f"💰 Total Pendapatan: <b>Rp {stats['revenue']:,}</b>\n\n"
-        f"Pilih tindakan admin:"
+        f"👥 Total Pengguna Bot : <b>{stats['users']}</b>\n"
+        f"📱 Total Akun VPN     : <b>{stats['accounts']}</b>\n"
+        f"🟢 User Sedang Online  : <b>{len(active_sessions)} User</b>\n"
+        f"🔒 Akun Terkunci      : <b>{len(locked_accs)} Akun</b>\n"
+        f"💰 Total Omset QRIS   : <b>Rp {stats['revenue']:,}</b>\n\n"
+        f"Pilih menu manajemen di bawah ini:"
     )
     markup = types.InlineKeyboardMarkup(row_width=2)
-    b1 = types.InlineKeyboardButton("📢 Broadcast Pesan", callback_data="admin_broadcast")
-    b2 = types.InlineKeyboardButton("➕ Tambah Saldo User", callback_data="admin_addsaldo_prompt")
-    b3 = types.InlineKeyboardButton("👥 List Users", callback_data="admin_list_users")
+    b_rules = types.InlineKeyboardButton("⚙️ Rules & Tarif Server", callback_data="admin_rules_menu")
+    b_mon = types.InlineKeyboardButton("👥 Live Monitoring & User", callback_data="admin_monitor_users")
+    b_lock = types.InlineKeyboardButton(f"🔒 Akun Terkunci ({len(locked_accs)})", callback_data="admin_list_suspended")
+    b_saldo = types.InlineKeyboardButton("➕ Tambah Saldo User", callback_data="admin_addsaldo_prompt")
+    b_bc = types.InlineKeyboardButton("📢 Broadcast Pesan", callback_data="admin_broadcast")
+    b_users = types.InlineKeyboardButton("📋 List Pengguna Bot", callback_data="admin_list_users")
     b_back = types.InlineKeyboardButton("🔙 Menu Utama", callback_data="menu_home")
-    markup.add(b1, b2)
-    markup.add(b3)
+    
+    markup.add(b_rules, b_mon)
+    markup.add(b_lock, b_saldo)
+    markup.add(b_bc, b_users)
     markup.add(b_back)
     bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+# --- Dynamic Rules Management ---
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_rules_menu")
+def callback_admin_rules_menu(call):
+    user_id = call.from_user.id
+    cfg = load_config()
+    if str(user_id) != str(cfg.get("ADMIN_ID", "")):
+        return
+
+    text = get_rules_summary()
+    text += "\n<i>Pilih pengaturan yang ingin diubah:</i>"
+
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    b_ip = types.InlineKeyboardButton("🌐 Ubah Limit IP", callback_data="admin_rule_ip_menu")
+    b_quota = types.InlineKeyboardButton("📦 Ubah Limit Kuota", callback_data="admin_rule_quota_menu")
+    b_sus = types.InlineKeyboardButton("⏱️ Ubah Durasi Suspen", callback_data="admin_rule_suspend_menu")
+    b_pr_m = types.InlineKeyboardButton("💵 Ubah Harga Bulanan", callback_data="admin_rule_price_monthly_prompt")
+    b_pr_p = types.InlineKeyboardButton("⚡ Ubah Tarif PAYG", callback_data="admin_rule_price_payg_prompt")
+    
+    auto_s = cfg.get("AUTO_SUSPEND_ENABLED", 1)
+    auto_text = "🛡️ Auto-Suspen: [ON]" if auto_s else "🛡️ Auto-Suspen: [OFF]"
+    b_toggle = types.InlineKeyboardButton(auto_text, callback_data="admin_rule_toggle_autosuspend")
+    b_back = types.InlineKeyboardButton("🔙 Panel Admin", callback_data="menu_admin")
+
+    markup.add(b_ip, b_quota)
+    markup.add(b_sus, b_toggle)
+    markup.add(b_pr_m, b_pr_p)
+    markup.add(b_back)
+    bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_rule_ip_menu")
+def callback_admin_rule_ip_menu(call):
+    user_id = call.from_user.id
+    cfg = load_config()
+    cur = cfg.get("DEFAULT_IP_LIMIT", 1)
+
+    text = f"🌐 <b>ATUR LIMIT IP DEFAULT PER AKUN</b>\n\nSaat ini: <b>{cur} IP</b>\nPilih batas IP baru:"
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    b1 = types.InlineKeyboardButton("1 IP", callback_data="set_rule_ip_1")
+    b2 = types.InlineKeyboardButton("2 IP", callback_data="set_rule_ip_2")
+    b3 = types.InlineKeyboardButton("3 IP", callback_data="set_rule_ip_3")
+    b4 = types.InlineKeyboardButton("4 IP", callback_data="set_rule_ip_4")
+    b5 = types.InlineKeyboardButton("5 IP", callback_data="set_rule_ip_5")
+    b_c = types.InlineKeyboardButton("✏️ Custom IP", callback_data="set_rule_ip_custom")
+    b_back = types.InlineKeyboardButton("🔙 Kembali", callback_data="admin_rules_menu")
+
+    markup.add(b1, b2, b3)
+    markup.add(b4, b5, b_c)
+    markup.add(b_back)
+    bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("set_rule_ip_"))
+def callback_set_rule_ip(call):
+    user_id = call.from_user.id
+    val_str = call.data.replace("set_rule_ip_", "")
+    if val_str == "custom":
+        user_states[user_id] = {"action": "wait_custom_rule_ip"}
+        bot.send_message(user_id, "✏️ Masukkan angka Limit IP baru (contoh: <code>1</code>):", reply_markup=back_home_keyboard())
+        return
+
+    try:
+        val = int(val_str)
+        update_config_key("DEFAULT_IP_LIMIT", val)
+        bot.answer_callback_query(call.id, f"Limit IP default berhasil diubah menjadi {val} IP!", show_alert=True)
+        callback_admin_rules_menu(call)
+    except Exception as e:
+        bot.send_message(user_id, f"Gagal mengubah limit IP: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_rule_quota_menu")
+def callback_admin_rule_quota_menu(call):
+    user_id = call.from_user.id
+    cfg = load_config()
+    cur = cfg.get("DEFAULT_QUOTA_GB", 350)
+    cur_str = f"{cur} GB" if cur > 0 else "Unlimited"
+
+    text = f"📦 <b>ATUR LIMIT KUOTA DEFAULT PER AKUN</b>\n\nSaat ini: <b>{cur_str}</b>\nPilih batas kuota baru:"
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    b1 = types.InlineKeyboardButton("100 GB", callback_data="set_rule_quota_100")
+    b2 = types.InlineKeyboardButton("250 GB", callback_data="set_rule_quota_250")
+    b3 = types.InlineKeyboardButton("350 GB", callback_data="set_rule_quota_350")
+    b4 = types.InlineKeyboardButton("500 GB", callback_data="set_rule_quota_500")
+    b5 = types.InlineKeyboardButton("Unlimited (0)", callback_data="set_rule_quota_0")
+    b_c = types.InlineKeyboardButton("✏️ Custom GB", callback_data="set_rule_quota_custom")
+    b_back = types.InlineKeyboardButton("🔙 Kembali", callback_data="admin_rules_menu")
+
+    markup.add(b1, b2)
+    markup.add(b3, b4)
+    markup.add(b5, b_c)
+    markup.add(b_back)
+    bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("set_rule_quota_"))
+def callback_set_rule_quota(call):
+    user_id = call.from_user.id
+    val_str = call.data.replace("set_rule_quota_", "")
+    if val_str == "custom":
+        user_states[user_id] = {"action": "wait_custom_rule_quota"}
+        bot.send_message(user_id, "✏️ Masukkan angka Limit Kuota dalam GB (contoh: <code>350</code>, atau 0 untuk unlimited):", reply_markup=back_home_keyboard())
+        return
+
+    try:
+        val = int(val_str)
+        update_config_key("DEFAULT_QUOTA_GB", val)
+        val_name = f"{val} GB" if val > 0 else "Unlimited"
+        bot.answer_callback_query(call.id, f"Limit Kuota default berhasil diubah menjadi {val_name}!", show_alert=True)
+        callback_admin_rules_menu(call)
+    except Exception as e:
+        bot.send_message(user_id, f"Gagal mengubah kuota: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_rule_suspend_menu")
+def callback_admin_rule_suspend_menu(call):
+    user_id = call.from_user.id
+    cfg = load_config()
+    cur = cfg.get("SUSPEND_DURATION_MINUTES", 10)
+
+    text = f"⏱️ <b>ATUR DURASI SUSPEN PELANGGARAN</b>\n\nSaat ini: <b>{cur} Menit</b>\nPilih durasi sanksi off akun:"
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    b1 = types.InlineKeyboardButton("5 Menit", callback_data="set_rule_suspend_5")
+    b2 = types.InlineKeyboardButton("10 Menit", callback_data="set_rule_suspend_10")
+    b3 = types.InlineKeyboardButton("15 Menit", callback_data="set_rule_suspend_15")
+    b4 = types.InlineKeyboardButton("30 Menit", callback_data="set_rule_suspend_30")
+    b5 = types.InlineKeyboardButton("60 Menit", callback_data="set_rule_suspend_60")
+    b_c = types.InlineKeyboardButton("✏️ Custom", callback_data="set_rule_suspend_custom")
+    b_back = types.InlineKeyboardButton("🔙 Kembali", callback_data="admin_rules_menu")
+
+    markup.add(b1, b2, b3)
+    markup.add(b4, b5, b_c)
+    markup.add(b_back)
+    bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("set_rule_suspend_"))
+def callback_set_rule_suspend(call):
+    user_id = call.from_user.id
+    val_str = call.data.replace("set_rule_suspend_", "")
+    if val_str == "custom":
+        user_states[user_id] = {"action": "wait_custom_rule_suspend"}
+        bot.send_message(user_id, "✏️ Masukkan durasi suspen dalam menit (contoh: <code>10</code>):", reply_markup=back_home_keyboard())
+        return
+
+    try:
+        val = int(val_str)
+        update_config_key("SUSPEND_DURATION_MINUTES", val)
+        bot.answer_callback_query(call.id, f"Durasi suspen berhasil diset menjadi {val} Menit!", show_alert=True)
+        callback_admin_rules_menu(call)
+    except Exception as e:
+        bot.send_message(user_id, f"Gagal mengubah durasi suspen: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_rule_price_monthly_prompt")
+def callback_admin_rule_price_monthly_prompt(call):
+    user_id = call.from_user.id
+    cfg = load_config()
+    cur = cfg.get("PRICE_MONTHLY", 8000)
+    user_states[user_id] = {"action": "wait_price_monthly"}
+    text = (
+        f"💵 <b>UBAH HARGA PAKET BULANAN (30 HARI)</b>\n\n"
+        f"Harga Saat Ini: <b>Rp {cur:,}</b>\n\n"
+        f"Ketik nominal harga baru (contoh: <code>10000</code>):"
+    )
+    bot.send_message(user_id, text, reply_markup=back_home_keyboard())
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_rule_price_payg_prompt")
+def callback_admin_rule_price_payg_prompt(call):
+    user_id = call.from_user.id
+    cfg = load_config()
+    cur_d = cfg.get("PRICE_PAYG_DAILY", 300)
+    cur_q = cfg.get("PRICE_PAYG_10GB", 1000)
+    user_states[user_id] = {"action": "wait_price_payg"}
+    text = (
+        f"⚡ <b>UBAH TARIF PAY-AS-YOU-GO (PAYG)</b>\n\n"
+        f"Tarif Harian Saat Ini     : <b>Rp {cur_d:,} / Hari</b>\n"
+        f"Tarif Kuota 10GB Saat Ini : <b>Rp {cur_q:,} / 10GB</b>\n\n"
+        f"Format masukan: <code>tarif_harian tarif_10gb</code>\n"
+        f"Contoh: <code>500 1500</code>"
+    )
+    bot.send_message(user_id, text, reply_markup=back_home_keyboard())
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_rule_toggle_autosuspend")
+def callback_admin_rule_toggle_autosuspend(call):
+    cfg = load_config()
+    cur = cfg.get("AUTO_SUSPEND_ENABLED", 1)
+    new_val = 0 if cur else 1
+    update_config_key("AUTO_SUSPEND_ENABLED", new_val)
+    status_str = "AKTIF" if new_val else "NONAKTIF"
+    bot.answer_callback_query(call.id, f"Auto-Suspen Multi-Login sekarang {status_str}!", show_alert=True)
+    callback_admin_rules_menu(call)
+
+# --- Live User Monitoring & Management ---
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_monitor_users")
+def callback_admin_monitor_users(call):
+    user_id = call.from_user.id
+    cfg = load_config()
+    if str(user_id) != str(cfg.get("ADMIN_ID", "")):
+        return
+
+    active_sessions = xray_manager.get_active_sessions()
+    suspended_accounts = database.get_locked_accounts()
+    all_accs = database.get_all_vpn_accounts_detailed(limit=200)
+
+    text = (
+        f"👥 <b>MONITORING USER & KONEKSI LIVE</b>\n\n"
+        f"📱 Total Akun Terdaftar : <b>{len(all_accs)}</b>\n"
+        f"🟢 User Sedang Online  : <b>{len(active_sessions)} User</b>\n"
+        f"🔒 Akun Disuspen/Lock  : <b>{len(suspended_accounts)} User</b>\n\n"
+        f"Pilih kategori monitoring di bawah ini:"
+    )
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    b1 = types.InlineKeyboardButton(f"🟢 Lihat User Sedang Login ({len(active_sessions)})", callback_data="admin_users_active_login")
+    b2 = types.InlineKeyboardButton(f"🔒 Lihat Akun Terkunci / Suspen ({len(suspended_accounts)})", callback_data="admin_list_suspended")
+    b3 = types.InlineKeyboardButton("📋 Lihat Semua Akun VPN", callback_data="admin_users_all_vpn")
+    b4 = types.InlineKeyboardButton("🔍 Cari Akun by Username", callback_data="admin_search_user_prompt")
+    b_back = types.InlineKeyboardButton("🔙 Panel Admin", callback_data="menu_admin")
+    
+    markup.add(b1, b2, b3, b4, b_back)
+    bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_users_active_login")
+def callback_admin_users_active_login(call):
+    user_id = call.from_user.id
+    active_sessions = xray_manager.get_active_sessions()
+
+    if not active_sessions:
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🔙 Kembali", callback_data="admin_monitor_users"))
+        bot.edit_message_text("🟢 <b>Tidak ada user yang sedang aktif login saat ini.</b>", chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+        return
+
+    text = f"🟢 <b>USER SEDANG LOGIN AKTIF ({len(active_sessions)} User):</b>\n\n"
+    markup = types.InlineKeyboardMarkup(row_width=1)
+
+    for uname, ips in list(active_sessions.items())[:10]:
+        usage = xray_manager.get_user_usage_and_status(uname)
+        proto = usage["protocol"].upper()
+        ip_sample = ", ".join(ips[:2])
+        text += (
+            f"• <b>{uname}</b> ({proto})\n"
+            f"  IP ({len(ips)}/{usage['ip_limit']}): <code>{ip_sample}</code>\n"
+            f"  Kuota: <b>{usage['used_human']} / {usage['quota_human']}</b> ({usage['percent']:.1f}%)\n"
+            f"  Bar: <code>{usage['progress_bar']}</code>\n\n"
+        )
+        markup.add(types.InlineKeyboardButton(f"⚙️ Kelola {uname}", callback_data=f"manage_user_{uname}"))
+
+    markup.add(types.InlineKeyboardButton("🔙 Kembali ke Monitor", callback_data="admin_monitor_users"))
+    bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_list_suspended")
+def callback_admin_list_suspended(call):
+    user_id = call.from_user.id
+    locked = database.get_locked_accounts()
+
+    if not locked:
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🔙 Kembali", callback_data="admin_monitor_users"))
+        bot.edit_message_text("🔒 <b>Tidak ada akun yang sedang disuspen / terkunci saat ini.</b>", chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+        return
+
+    text = f"🔒 <b>DAFTAR AKUN DISUSPEN / TERKUNCI ({len(locked)} Total):</b>\n\n"
+    markup = types.InlineKeyboardMarkup(row_width=2)
+
+    for acc in locked[:10]:
+        uname = acc["vpn_username"]
+        proto = acc["protocol"]
+        reason = acc.get("lock_reason", "multi_login")
+        usage = xray_manager.get_user_usage_and_status(uname, proto)
+        rem_str = usage.get("remaining_human", "Selesai")
+
+        text += (
+            f"🔴 <b>{uname}</b> ({proto.upper()})\n"
+            f"  Alasan : <code>{reason}</code>\n"
+            f"  Sisa Waktu : <b>{rem_str}</b>\n\n"
+        )
+        b_unban = types.InlineKeyboardButton(f"🔓 Unban {uname}", callback_data=f"quick_unban_{uname}")
+        b_det = types.InlineKeyboardButton(f"⚙️ Detail", callback_data=f"manage_user_{uname}")
+        markup.add(b_unban, b_det)
+
+    markup.add(types.InlineKeyboardButton("🔙 Kembali ke Monitor", callback_data="admin_monitor_users"))
+    bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("quick_unban_"))
+def callback_quick_unban(call):
+    uname = call.data.replace("quick_unban_", "")
+    acc = database.get_account_by_username(uname)
+    proto = acc.get("protocol", "vmess") if acc else "vmess"
+    xray_manager.unsuspend_account(proto, uname)
+    bot.answer_callback_query(call.id, f"Akun {uname} berhasil di-unban / diaktifkan!", show_alert=True)
+    callback_admin_list_suspended(call)
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_users_all_vpn")
+def callback_admin_users_all_vpn(call):
+    user_id = call.from_user.id
+    accounts = database.get_all_vpn_accounts_detailed(limit=25)
+
+    if not accounts:
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🔙 Kembali", callback_data="admin_monitor_users"))
+        bot.edit_message_text("Belum ada akun VPN yang dibuat.", chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+        return
+
+    text = f"📋 <b>SEMUA AKUN VPN ({len(accounts)} Ditampilkan):</b>\n\n"
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    for acc in accounts:
+        status_icon = "🟢" if acc["status"] == "active" else "🔴"
+        uname = acc["vpn_username"]
+        btn_text = f"{status_icon} {uname} ({acc['protocol']})"
+        markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"manage_user_{uname}"))
+
+    markup.add(types.InlineKeyboardButton("🔙 Kembali", callback_data="admin_monitor_users"))
+    bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_search_user_prompt")
+def callback_admin_search_user_prompt(call):
+    user_id = call.from_user.id
+    user_states[user_id] = {"action": "wait_search_vpn_user"}
+    text = "🔍 <b>CARI AKUN VPN</b>\n\nMasukkan username VPN yang ingin dicari:"
+    bot.send_message(user_id, text, reply_markup=back_home_keyboard())
+
+# --- Single User Control Dashboard ---
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("manage_user_"))
+def callback_manage_user(call):
+    user_id = call.from_user.id
+    uname = call.data.replace("manage_user_", "")
+    acc = database.get_account_by_username(uname)
+
+    if not acc:
+        bot.answer_callback_query(call.id, f"Akun {uname} tidak ditemukan!", show_alert=True)
+        return
+
+    proto = acc["protocol"]
+    usage = xray_manager.get_user_usage_and_status(uname, proto)
+    status_str = "🟢 AKTIF" if not usage["is_locked"] else f"🔴 TERKUNCI ({usage.get('lock_reason', '')})"
+    tg_user = f"@{acc['tg_username']}" if acc.get("tg_username") else str(acc.get("user_id"))
+
+    text = (
+        f"👤 <b>KONTROL PENGGUNA: {uname}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"» Protokol     : <b>{proto.upper()}</b>\n"
+        f"» Paket        : <b>{acc['plan_type'].upper()}</b>\n"
+        f"» Pemilik TG   : <code>{tg_user}</code>\n"
+        f"» Status Akun  : <b>{status_str}</b>\n"
+        f"» Masa Aktif   : <code>{acc['exp_date']}</code>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"📊 <b>KUOTA & TRAFIK:</b>\n"
+        f"» Terpakai     : <b>{usage['used_human']} / {usage['quota_human']}</b>\n"
+        f"» Persentase   : <b>{usage['percent']:.1f}%</b>\n"
+        f"» Bar Visual   : <code>{usage['progress_bar']}</code>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🌐 <b>KONEKSI IP:</b>\n"
+        f"» Batas Login  : <b>{usage['ip_limit']} IP</b>\n"
+        f"» Aktif Saat Ini: <b>{usage['active_ip_count']} IP</b>\n"
+    )
+    if usage["active_ips"]:
+        text += f"» IP Terhubung : <code>{', '.join(usage['active_ips'])}</code>\n"
+
+    if usage["is_locked"]:
+        text += (
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"⏱️ <b>INFO SUSPEN:</b>\n"
+            f"» Hingga Waktu : <code>{usage.get('locked_until')}</code>\n"
+            f"» Sisa Hitung  : <b>{usage.get('remaining_human')}</b>\n"
+        )
+
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    if usage["is_locked"]:
+        b_lock = types.InlineKeyboardButton("🔓 Buka Kunci (Unban)", callback_data=f"user_act_unsuspend_{uname}")
+    else:
+        b_lock = types.InlineKeyboardButton("🔒 Suspen Akun", callback_data=f"user_act_suspend_{uname}")
+
+    b_reset = types.InlineKeyboardButton("🔄 Reset Kuota", callback_data=f"user_act_resetquota_{uname}")
+    b_quota = types.InlineKeyboardButton("✏️ Atur Kuota", callback_data=f"user_act_setquota_prompt_{uname}")
+    b_ip = types.InlineKeyboardButton("✏️ Atur Limit IP", callback_data=f"user_act_setip_prompt_{uname}")
+    b_del = types.InlineKeyboardButton("🗑️ Hapus Akun", callback_data=f"user_act_delconfirm_{uname}")
+    b_back = types.InlineKeyboardButton("🔙 Monitoring User", callback_data="admin_monitor_users")
+
+    markup.add(b_lock, b_reset)
+    markup.add(b_quota, b_ip)
+    markup.add(b_del)
+    markup.add(b_back)
+
+    bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("user_act_unsuspend_"))
+def callback_user_act_unsuspend(call):
+    uname = call.data.replace("user_act_unsuspend_", "")
+    acc = database.get_account_by_username(uname)
+    proto = acc.get("protocol", "vmess") if acc else "vmess"
+    xray_manager.unsuspend_account(proto, uname)
+    bot.answer_callback_query(call.id, f"Akun {uname} berhasil dipulihkan & aktif kembali!", show_alert=True)
+    call.data = f"manage_user_{uname}"
+    callback_manage_user(call)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("user_act_suspend_"))
+def callback_user_act_suspend(call):
+    uname = call.data.replace("user_act_suspend_", "")
+    acc = database.get_account_by_username(uname)
+    proto = acc.get("protocol", "vmess") if acc else "vmess"
+    cfg = load_config()
+    suspend_min = cfg.get("SUSPEND_DURATION_MINUTES", 10)
+    xray_manager.suspend_account(proto, uname, duration_minutes=suspend_min, reason="admin_manual")
+    bot.answer_callback_query(call.id, f"Akun {uname} disuspen selama {suspend_min} Menit.", show_alert=True)
+    call.data = f"manage_user_{uname}"
+    callback_manage_user(call)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("user_act_resetquota_"))
+def callback_user_act_resetquota(call):
+    uname = call.data.replace("user_act_resetquota_", "")
+    acc = database.get_account_by_username(uname)
+    proto = acc.get("protocol", "vmess") if acc else "vmess"
+    xray_manager.reset_user_quota(proto, uname)
+    bot.answer_callback_query(call.id, f"Pemakaian kuota {uname} berhasil di-reset ke 0!", show_alert=True)
+    call.data = f"manage_user_{uname}"
+    callback_manage_user(call)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("user_act_setquota_prompt_"))
+def callback_user_act_setquota_prompt(call):
+    user_id = call.from_user.id
+    uname = call.data.replace("user_act_setquota_prompt_", "")
+    user_states[user_id] = {"action": "wait_user_custom_quota", "uname": uname}
+    text = f"✏️ <b>UBAH LIMIT KUOTA UNTUK {uname}</b>\n\nMasukkan kuota baru dalam GB (contoh: <code>350</code>, atau <code>0</code> untuk unlimited):"
+    bot.send_message(user_id, text, reply_markup=back_home_keyboard())
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("user_act_setip_prompt_"))
+def callback_user_act_setip_prompt(call):
+    user_id = call.from_user.id
+    uname = call.data.replace("user_act_setip_prompt_", "")
+    user_states[user_id] = {"action": "wait_user_custom_ip", "uname": uname}
+    text = f"✏️ <b>UBAH LIMIT IP UNTUK {uname}</b>\n\nMasukkan batas IP baru (contoh: <code>1</code>):"
+    bot.send_message(user_id, text, reply_markup=back_home_keyboard())
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("user_act_delconfirm_"))
+def callback_user_act_delconfirm(call):
+    user_id = call.from_user.id
+    uname = call.data.replace("user_act_delconfirm_", "")
+    text = f"⚠️ <b>KONFIRMASI PENGHAPUSAN</b>\n\nApakah Anda yakin ingin menghapus akun <code>{uname}</code> secara permanen?"
+    markup = types.InlineKeyboardMarkup()
+    b_yes = types.InlineKeyboardButton("🗑️ Ya, Hapus Sekarang", callback_data=f"user_act_delete_{uname}")
+    b_no = types.InlineKeyboardButton("❌ Batal", callback_data=f"manage_user_{uname}")
+    markup.add(b_yes, b_no)
+    bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("user_act_delete_"))
+def callback_user_act_delete(call):
+    uname = call.data.replace("user_act_delete_", "")
+    acc = database.get_account_by_username(uname)
+    proto = acc.get("protocol", "vmess") if acc else "vmess"
+    xray_manager.delete_account(proto, uname)
+    database.delete_vpn_account_by_username(uname)
+    bot.answer_callback_query(call.id, f"Akun {uname} telah berhasil dihapus permanen.", show_alert=True)
+    callback_admin_monitor_users(call)
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin_broadcast")
 def callback_admin_broadcast(call):
@@ -642,8 +1105,11 @@ def handle_text_inputs(message):
 
         wait_msg = bot.send_message(user_id, f"⏳ <i>Membuat akun {proto.upper()} untuk {text}...</i>")
         try:
-            acc = xray_manager.create_account(proto, text, days=30, quota_gb=0, ip_limit=2)
-            database.add_vpn_account(user_id, proto, text, acc["uuid"], "monthly", acc["exp_date"], acc["primary_link"])
+            cfg = load_config()
+            q_gb = cfg.get("DEFAULT_QUOTA_GB", 350)
+            ip_l = cfg.get("DEFAULT_IP_LIMIT", 1)
+            acc = xray_manager.create_account(proto, text, days=30, quota_gb=q_gb, ip_limit=ip_l)
+            database.add_vpn_account(user_id, proto, text, acc["uuid"], "monthly", acc["exp_date"], acc["primary_link"], quota_gb=q_gb, ip_limit=ip_l)
             bot.delete_message(user_id, wait_msg.message_id)
             send_account_details(user_id, acc, title=f"🎉 AKUN {proto.upper()} 30 HARI BERHASIL DIBUAT")
         except Exception as e:
@@ -672,8 +1138,11 @@ def handle_text_inputs(message):
 
         wait_msg = bot.send_message(user_id, f"⏳ <i>Mengaktifkan langganan PAYG {proto.upper()}...</i>")
         try:
-            acc = xray_manager.create_account(proto, text, days=60, quota_gb=0, ip_limit=2)
-            database.add_vpn_account(user_id, proto, text, acc["uuid"], "payg", acc["exp_date"], acc["primary_link"])
+            cfg = load_config()
+            q_gb = cfg.get("DEFAULT_QUOTA_GB", 350)
+            ip_l = cfg.get("DEFAULT_IP_LIMIT", 1)
+            acc = xray_manager.create_account(proto, text, days=60, quota_gb=q_gb, ip_limit=ip_l)
+            database.add_vpn_account(user_id, proto, text, acc["uuid"], "payg", acc["exp_date"], acc["primary_link"], quota_gb=q_gb, ip_limit=ip_l)
             database.add_payg_subscription(user_id, text, proto, "daily")
             bot.delete_message(user_id, wait_msg.message_id)
             send_account_details(user_id, acc, title=f"⚡ AKUN PAYG {proto.upper()} AKTIF")
@@ -715,6 +1184,112 @@ def handle_text_inputs(message):
                 pass
         except ValueError:
             bot.send_message(user_id, "ID dan Jumlah harus berupa angka.")
+
+    # Custom rule IP
+    elif action == "wait_custom_rule_ip":
+        del user_states[user_id]
+        try:
+            val = int(text)
+            update_config_key("DEFAULT_IP_LIMIT", val)
+            bot.send_message(user_id, f"✅ Limit IP default berhasil diset ke {val} IP.", reply_markup=main_menu_keyboard(user_id))
+        except ValueError:
+            bot.send_message(user_id, "Masukkan hanya angka.")
+
+    # Custom rule Quota
+    elif action == "wait_custom_rule_quota":
+        del user_states[user_id]
+        try:
+            val = int(text)
+            update_config_key("DEFAULT_QUOTA_GB", val)
+            v_name = f"{val} GB" if val > 0 else "Unlimited"
+            bot.send_message(user_id, f"✅ Limit Kuota default berhasil diset ke {v_name}.", reply_markup=main_menu_keyboard(user_id))
+        except ValueError:
+            bot.send_message(user_id, "Masukkan hanya angka.")
+
+    # Custom rule Suspend
+    elif action == "wait_custom_rule_suspend":
+        del user_states[user_id]
+        try:
+            val = int(text)
+            update_config_key("SUSPEND_DURATION_MINUTES", val)
+            bot.send_message(user_id, f"✅ Durasi suspen berhasil diset ke {val} Menit.", reply_markup=main_menu_keyboard(user_id))
+        except ValueError:
+            bot.send_message(user_id, "Masukkan hanya angka.")
+
+    # Change monthly price
+    elif action == "wait_price_monthly":
+        del user_states[user_id]
+        try:
+            val = int(text)
+            update_config_key("PRICE_MONTHLY", val)
+            bot.send_message(user_id, f"✅ Harga paket bulanan berhasil diubah menjadi Rp {val:,} / 30 Hari.", reply_markup=main_menu_keyboard(user_id))
+        except ValueError:
+            bot.send_message(user_id, "Masukkan hanya angka.")
+
+    # Change PAYG price
+    elif action == "wait_price_payg":
+        del user_states[user_id]
+        parts = text.split()
+        if len(parts) != 2:
+            bot.send_message(user_id, "Format salah. Masukkan: <code>tarif_harian tarif_10gb</code>")
+            return
+        try:
+            d_val = int(parts[0])
+            q_val = int(parts[1])
+            update_config_key("PRICE_PAYG_DAILY", d_val)
+            update_config_key("PRICE_PAYG_10GB", q_val)
+            bot.send_message(user_id, f"✅ Tarif PAYG berhasil diperbarui:\n• Harian: Rp {d_val:,}\n• Kuota 10GB: Rp {q_val:,}", reply_markup=main_menu_keyboard(user_id))
+        except ValueError:
+            bot.send_message(user_id, "Semua tarif harus berupa angka.")
+
+    # Search user
+    elif action == "wait_search_vpn_user":
+        del user_states[user_id]
+        acc = database.get_account_by_username(text)
+        if not acc:
+            bot.send_message(user_id, f"❌ Akun dengan username <code>{text}</code> tidak ditemukan.", reply_markup=main_menu_keyboard(user_id))
+            return
+        proto = acc["protocol"]
+        usage = xray_manager.get_user_usage_and_status(text, proto)
+        status_str = "🟢 AKTIF" if not usage["is_locked"] else f"🔴 TERKUNCI ({usage.get('lock_reason', '')})"
+        card_text = (
+            f"👤 <b>KONTROL PENGGUNA: {text}</b>\n"
+            f"» Protokol: <b>{proto.upper()}</b> | Paket: <b>{acc['plan_type'].upper()}</b>\n"
+            f"» Status: <b>{status_str}</b> | Expired: <code>{acc['exp_date']}</code>\n"
+            f"» Kuota: <b>{usage['used_human']} / {usage['quota_human']}</b> ({usage['percent']:.1f}%)\n"
+            f"» Batas IP: <b>{usage['ip_limit']} IP</b> | Aktif: <b>{usage['active_ip_count']} IP</b>"
+        )
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton(f"⚙️ Buka Menu Kelola Lengkap", callback_data=f"manage_user_{text}"))
+        markup.add(types.InlineKeyboardButton("🔙 Panel Admin", callback_data="menu_admin"))
+        bot.send_message(user_id, card_text, reply_markup=markup)
+
+    # Set user custom quota
+    elif action == "wait_user_custom_quota":
+        uname = state["uname"]
+        del user_states[user_id]
+        try:
+            val = int(text)
+            acc = database.get_account_by_username(uname)
+            proto = acc.get("protocol", "vmess") if acc else "vmess"
+            xray_manager.set_user_quota(proto, uname, val)
+            val_name = f"{val} GB" if val > 0 else "Unlimited"
+            bot.send_message(user_id, f"✅ Kuota untuk akun <code>{uname}</code> berhasil diatur menjadi {val_name}.", reply_markup=main_menu_keyboard(user_id))
+        except ValueError:
+            bot.send_message(user_id, "Masukkan angka yang valid.")
+
+    # Set user custom IP limit
+    elif action == "wait_user_custom_ip":
+        uname = state["uname"]
+        del user_states[user_id]
+        try:
+            val = int(text)
+            acc = database.get_account_by_username(uname)
+            proto = acc.get("protocol", "vmess") if acc else "vmess"
+            xray_manager.set_user_ip_limit(proto, uname, val)
+            bot.send_message(user_id, f"✅ Limit IP untuk akun <code>{uname}</code> berhasil diatur menjadi {val} IP.", reply_markup=main_menu_keyboard(user_id))
+        except ValueError:
+            bot.send_message(user_id, "Masukkan angka yang valid.")
 
 def re_valid_username(u: str) -> bool:
     import re

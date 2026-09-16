@@ -12,6 +12,13 @@ function send-ip() {
     KEY=$(grep -E "^#bot# " "/etc/bot/.bot.db" | cut -d ' ' -f 2)
     TIME="10"
     URL="https://api.telegram.org/bot$KEY/sendMessage"
+    SUSPEND_MIN=10
+    if [ -f "/etc/satset/bot.env" ]; then
+        cfg_min=$(grep -E "^SUSPEND_DURATION_MINUTES=" /etc/satset/bot.env | cut -d '=' -f 2 | tr -d '"' | tr -d "'")
+        if [[ -n "$cfg_min" && "$cfg_min" =~ ^[0-9]+$ ]]; then
+            SUSPEND_MIN=$cfg_min
+        fi
+    fi
     TEXT="
 <code>────────────────────</code>
 <b>⚠️ NOTIFICATIONS ⚠️</b>
@@ -21,7 +28,7 @@ function send-ip() {
 <b>» Limit IP:</b> <code>${limit_ip} IP</code>
 <b>» IP Login:</b> <code>${login_count} IP</code>
 <b>» Status:</b> <code>User telah dikunci</code>
-<b>» Durasi Penguncian 5 Menit</b>
+<b>» Durasi Penguncian ${SUSPEND_MIN} Menit</b>
 <code>────────────────────</code>
 <b>» 🤖 Awokawok Kena Lock...</b>
 <code>────────────────────</code>
@@ -96,6 +103,15 @@ function unlock_expired_users() {
     local temp_lock_file=$(mktemp)
     local unlocked_count=0
 
+    local suspend_min=10
+    if [ -f "/etc/satset/bot.env" ]; then
+        local cfg_min=$(grep -E "^SUSPEND_DURATION_MINUTES=" /etc/satset/bot.env | cut -d '=' -f 2 | tr -d '"' | tr -d "'")
+        if [[ -n "$cfg_min" && "$cfg_min" =~ ^[0-9]+$ ]]; then
+            suspend_min=$cfg_min
+        fi
+    fi
+    local suspend_sec=$(( suspend_min * 60 ))
+
     while IFS= read -r line; do
         local protocol=$(echo "$line" | cut -d ':' -f 1)
         local user=$(echo "$line" | cut -d ':' -f 2)
@@ -104,7 +120,7 @@ function unlock_expired_users() {
         if [[ "$protocol" == "vless" && -n "$user" && -n "$lock_timestamp" ]]; then
             local elapsed_time=$((current_time - lock_timestamp))
 
-            if [[ "$elapsed_time" -ge 300 ]]; then 
+            if [[ "$elapsed_time" -ge $suspend_sec ]]; then 
                 echo "Attempting to unlock vless user: ${user} (locked for ${elapsed_time} seconds)"
                 modify_xray_config "unlock" "$user"
                 unlocked_user="$user"
