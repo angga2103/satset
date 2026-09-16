@@ -214,11 +214,11 @@ MODE="${1:-NORMAL}"
 iptables -N XRAY_LIMIT 2>/dev/null || true
 iptables -F XRAY_LIMIT
 if [[ "$MODE" == "AGRESIF" ]]; then
-  iptables -A XRAY_LIMIT -p tcp --syn -m limit --limit 20/s --limit-burst 40 -j RETURN
-  iptables -A XRAY_LIMIT -p tcp -m connlimit --connlimit-above 40 -j DROP
+  iptables -A XRAY_LIMIT -p tcp --syn -m limit --limit 100/s --limit-burst 200 -j RETURN
+  iptables -A XRAY_LIMIT -p tcp -m connlimit --connlimit-above 200 -j DROP
 else
-  iptables -A XRAY_LIMIT -p tcp --syn -m limit --limit 60/s --limit-burst 120 -j RETURN
-  iptables -A XRAY_LIMIT -p tcp -m connlimit --connlimit-above 120 -j DROP
+  iptables -A XRAY_LIMIT -p tcp --syn -m limit --limit 300/s --limit-burst 500 -j RETURN
+  iptables -A XRAY_LIMIT -p tcp -m connlimit --connlimit-above 500 -j DROP
 fi
 iptables -D INPUT -j XRAY_LIMIT 2>/dev/null || true
 iptables -I INPUT 1 -j XRAY_LIMIT

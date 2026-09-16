@@ -74,12 +74,12 @@ apply_anti_ddos() {
     # 3. Drop new connection without SYN
     iptables -A SATSET_DDOS -p tcp ! --syn -m state --state NEW -j DROP 2>/dev/null || true
 
-    # 4. Limit TCP SYN flood (50/s with burst 100)
-    iptables -A SATSET_DDOS -p tcp --syn -m limit --limit 50/s --limit-burst 100 -j RETURN 2>/dev/null || true
+    # 4. Limit TCP SYN flood (300/s with burst 500)
+    iptables -A SATSET_DDOS -p tcp --syn -m limit --limit 300/s --limit-burst 500 -j RETURN 2>/dev/null || true
     iptables -A SATSET_DDOS -p tcp --syn -j DROP 2>/dev/null || true
 
-    # 5. Limit concurrent connections per IP (Max 80 simultaneous connections per IP)
-    iptables -A SATSET_DDOS -p tcp -m connlimit --connlimit-above 80 --connlimit-mask 32 -j DROP 2>/dev/null || true
+    # 5. Limit concurrent connections per IP (Max 500 simultaneous connections per IP)
+    iptables -A SATSET_DDOS -p tcp -m connlimit --connlimit-above 500 --connlimit-mask 32 -j DROP 2>/dev/null || true
 
     # 6. Limit UDP flood (100/s burst 200)
     iptables -A SATSET_DDOS -p udp -m limit --limit 100/s --limit-burst 200 -j RETURN 2>/dev/null || true
