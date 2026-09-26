@@ -563,6 +563,9 @@ EOF
   cp -f /usr/local/sbin/tune-warp /etc/satset/tune-warp.sh 2>/dev/null || true
   ln -sf /usr/local/sbin/tune-warp /usr/local/sbin/warp 2>/dev/null || true
 
+  wget -q -O /etc/satset/reinstall.sh "${REPO}files/reinstall.sh" >/dev/null 2>&1 || true
+  chmod +x /etc/satset/reinstall.sh 2>/dev/null || true
+
   echo -e "${YELLOW} Mengoptimasi network interfaces & akselerasi hardware offloading...${NC}"
   for interface in $(ip -o -4 addr show | awk '{print $2}' | grep -v "lo" | cut -d/ -f1); do
       echo -e "${GREEN} Mengoptimasi $interface ${NC}"

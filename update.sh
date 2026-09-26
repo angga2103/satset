@@ -359,6 +359,11 @@ except Exception:
 " 2>/dev/null || true
 fi
 
+# Pasang Engine Rebuild OS Mandiri (Aman & Lokal)
+wget -q -O /etc/satset/reinstall.sh "$REPO_RAW/files/reinstall.sh${CACHE_BUSTER}" 2>/dev/null || \
+curl -fsSL -o /etc/satset/reinstall.sh "$REPO_RAW/files/reinstall.sh${CACHE_BUSTER}" 2>/dev/null || true
+chmod +x /etc/satset/reinstall.sh 2>/dev/null || true
+
 if systemctl is-active --quiet satset-bot 2>/dev/null; then
     systemctl restart satset-bot 2>/dev/null || true
 fi

@@ -1,0 +1,188 @@
+#!/bin/bash
+# ==========================================================
+# SATSET VPS Rebuild Manager (m-rebuild)
+# Developed for MAS ANSOR PROJECT / SATSET VPS Automation
+# ==========================================================
+clear
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+WHITE='\033[1;97m'
+NC='\033[0m'
+Lime='\e[38;5;155m'
+ungu='\033[0;35m'
+
+REPO="https://raw.githubusercontent.com/angga2103/satset/main/"
+REINSTALL_BIN="/etc/satset/reinstall.sh"
+
+ensure_reinstall_engine() {
+    mkdir -p /etc/satset
+    if [ ! -s "$REINSTALL_BIN" ]; then
+        echo -e "${CYAN}• Mengunduh modul rebuild mandiri dari repositori satset...${NC}"
+        wget -q -O "$REINSTALL_BIN" "${REPO}files/reinstall.sh" 2>/dev/null || \
+        curl -fsSL -o "$REINSTALL_BIN" "${REPO}files/reinstall.sh" 2>/dev/null || true
+        chmod +x "$REINSTALL_BIN" 2>/dev/null || true
+    fi
+
+    if [ ! -s "$REINSTALL_BIN" ]; then
+        echo -e "${RED}[ERROR] Gagal mengunduh modul rebuild mandiri.${NC}"
+        echo -e "${YELLOW}Periksa koneksi internet server Anda.${NC}"
+        read -n 1 -s -r -p "Tekan tombol apa saja untuk kembali ke menu..."
+        m-setting
+        exit 1
+    fi
+}
+
+execute_rebuild() {
+    local distro_flag="$1"
+    local distro_ver="$2"
+    local os_display="$3"
+
+    clear
+    echo -e "${WHITE}┌────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│${NC}           ${RED}KONFIRMASI AKHIR FORMAT & REBUILD OS${NC}         ${WHITE}│${NC}"
+    echo -e "${WHITE}├────────────────────────────────────────────────────────┤${NC}"
+    echo -e "${WHITE}│${NC}  Sistem Operasi Target : ${Lime}${os_display}${NC}"
+    echo -e "${WHITE}│${NC}  Akun Login Baru       : ${WHITE}root${NC}"
+    echo -e "${WHITE}└────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+
+    # 1. Input Password Root Baru
+    local new_pass=""
+    while [ -z "$new_pass" ] || [ ${#new_pass} -lt 6 ]; do
+        echo -ne " ${YELLOW}Masukkan Password Root Baru (Minimal 6 karakter): ${NC}"
+        read -r new_pass
+        if [ ${#new_pass} -lt 6 ]; then
+            echo -e " ${RED}Password terlalu pendek! Gunakan minimal 6 karakter.${NC}"
+        fi
+    done
+
+    # 2. Input Port SSH Baru
+    echo -ne " ${YELLOW}Masukkan Port SSH Baru [Default: 22]: ${NC}"
+    read -r new_port
+    [[ -z "$new_port" || ! "$new_port" =~ ^[0-9]+$ ]] && new_port="22"
+
+    clear
+    echo -e "${WHITE}┌────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│${NC}         ${YELLOW}RINGKASAN KREDENSIAL LOGIN SETELAH REBUILD${NC}     ${WHITE}│${NC}"
+    echo -e "${WHITE}├────────────────────────────────────────────────────────┤${NC}"
+    echo -e "${WHITE}│${NC}  • Sistem Operasi : ${Lime}${os_display}${NC}"
+    echo -e "${WHITE}│${NC}  • Username       : ${WHITE}root${NC}"
+    echo -e "${WHITE}│${NC}  • Password Baru  : ${WHITE}${new_pass}${NC}"
+    echo -e "${WHITE}│${NC}  • Port SSH Baru  : ${WHITE}${new_port}${NC}"
+    echo -e "${WHITE}├────────────────────────────────────────────────────────┤${NC}"
+    echo -e "${WHITE}│${NC}  ${RED}PERHATIAN PENTING:${NC}                                    ${WHITE}│${NC}"
+    echo -e "${WHITE}│${NC}  Harap FOTO atau CATAT password di atas sekarang juga!  ${WHITE}│${NC}"
+    echo -e "${WHITE}│${NC}  Setelah proses rebuild dimulai, server akan reboot dan ${WHITE}│${NC}"
+    echo -e "${WHITE}│${NC}  membutuhkan waktu sekitar 5 - 15 menit untuk selesai.  ${WHITE}│${NC}"
+    echo -e "${WHITE}└────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+    echo -e " ${RED}Ketik 'REBUILD' (huruf kapital) untuk memulai proses format:${NC}"
+    read -p " Konfirmasi: " confirm
+
+    if [ "$confirm" != "REBUILD" ]; then
+        echo ""
+        echo -e " ${GREEN}Konfirmasi salah / dibatalkan. Sistem Anda 100% AMAN.${NC}"
+        sleep 2
+        m_rebuild
+        return
+    fi
+
+    ensure_reinstall_engine
+
+    echo ""
+    echo -e "${CYAN}• Memulai proses instalasi ulang OS dalam 10 detik...${NC}"
+    echo -e "${YELLOW}  (Tekan Ctrl+C sekarang jika Anda ingin membatalkan)${NC}"
+    for i in {10..1}; do
+        echo -ne "\r  Rebooting dalam $i detik... "
+        sleep 1
+    done
+    echo ""
+
+    echo -e "${GREEN}• Mengeksekusi modul reinstall mandiri...${NC}"
+    bash "$REINSTALL_BIN" "$distro_flag" "$distro_ver" -pwd "$new_pass" -port "$new_port" || true
+    sleep 3
+    reboot
+}
+
+menu_debian() {
+    clear
+    echo -e "${WHITE}────────────────────────────────────────────────────────${NC}"
+    echo -e " ${Lime}PILIH DISTRO DEBIAN${NC} - ${WHITE}MAS ANSOR PROJECT${NC}"
+    echo -e "${WHITE}────────────────────────────────────────────────────────${NC}"
+    echo -e " ${ungu}[${WHITE}01${ungu}]${NC} ${WHITE}Debian 12 (Bookworm) - Direkomendasikan ⭐${NC}"
+    echo -e " ${ungu}[${WHITE}02${ungu}]${NC} ${WHITE}Debian 11 (Bullseye)${NC}"
+    echo -e " ${ungu}[${WHITE}03${ungu}]${NC} ${WHITE}Debian 10 (Buster)${NC}"
+    echo -e "${WHITE}────────────────────────────────────────────────────────${NC}"
+    echo -e " ${ungu}[${WHITE}00${ungu}]${NC} ${WHITE}Kembali ke Menu Rebuild${NC}"
+    echo -e "${WHITE}────────────────────────────────────────────────────────${NC}"
+    echo ""
+    read -p " Pilih opsi [00-03]: " opt
+    case "$opt" in
+        1|01) execute_rebuild "-debian" "12" "Debian 12 (Bookworm)" ;;
+        2|02) execute_rebuild "-debian" "11" "Debian 11 (Bullseye)" ;;
+        3|03) execute_rebuild "-debian" "10" "Debian 10 (Buster)" ;;
+        0|00|x|X) m_rebuild ;;
+        *) echo "Pilihan tidak valid"; sleep 1; menu_debian ;;
+    esac
+}
+
+menu_ubuntu() {
+    clear
+    echo -e "${WHITE}────────────────────────────────────────────────────────${NC}"
+    echo -e " ${Lime}PILIH DISTRO UBUNTU${NC} - ${WHITE}MAS ANSOR PROJECT${NC}"
+    echo -e "${WHITE}────────────────────────────────────────────────────────${NC}"
+    echo -e " ${ungu}[${WHITE}01${ungu}]${NC} ${WHITE}Ubuntu 24.04 LTS (Noble Numbat)${NC}"
+    echo -e " ${ungu}[${WHITE}02${ungu}]${NC} ${WHITE}Ubuntu 22.04 LTS (Jammy Jellyfish) ⭐${NC}"
+    echo -e " ${ungu}[${WHITE}03${ungu}]${NC} ${WHITE}Ubuntu 20.04 LTS (Focal Fossa)${NC}"
+    echo -e "${WHITE}────────────────────────────────────────────────────────${NC}"
+    echo -e " ${ungu}[${WHITE}00${ungu}]${NC} ${WHITE}Kembali ke Menu Rebuild${NC}"
+    echo -e "${WHITE}────────────────────────────────────────────────────────${NC}"
+    echo ""
+    read -p " Pilih opsi [00-03]: " opt
+    case "$opt" in
+        1|01) execute_rebuild "-ubuntu" "24.04" "Ubuntu 24.04 LTS" ;;
+        2|02) execute_rebuild "-ubuntu" "22.04" "Ubuntu 22.04 LTS" ;;
+        3|03) execute_rebuild "-ubuntu" "20.04" "Ubuntu 20.04 LTS" ;;
+        0|00|x|X) m_rebuild ;;
+        *) echo "Pilihan tidak valid"; sleep 1; menu_ubuntu ;;
+    esac
+}
+
+m_rebuild() {
+    clear
+    echo -e "${WHITE}┌────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│${NC}              ${RED}REBUILD MANAGER (FORMAT OS VPS)${NC}           ${WHITE}│${NC}"
+    echo -e "${WHITE}├────────────────────────────────────────────────────────┤${NC}"
+    echo -e "${WHITE}│${NC}  ${YELLOW}PERINGATAN SANGAT PENTING:${NC}                            ${WHITE}│${NC}"
+    echo -e "${WHITE}│${NC}  Fitur ini akan ${RED}MENGHAPUS SELURUH DATA & AKUN VPN${NC}     ${WHITE}│${NC}"
+    echo -e "${WHITE}│${NC}  pada harddisk server dan menginstal OS baru dari awal. ${WHITE}│${NC}"
+    echo -e "${WHITE}│${NC}                                                         ${WHITE}│${NC}"
+    echo -e "${WHITE}│${NC}  ${CYAN}Saran Resmi:${NC}                                          ${WHITE}│${NC}"
+    echo -e "${WHITE}│${NC}  Jika penyedia VPS Anda (misal: Rumahweb) memiliki      ${WHITE}│${NC}"
+    echo -e "${WHITE}│${NC}  tombol Rebuild di Web Client Area, sangat disarankan   ${WHITE}│${NC}"
+    echo -e "${WHITE}│${NC}  menggunakan panel resmi web untuk keamanan maksimal.   ${WHITE}│${NC}"
+    echo -e "${WHITE}└────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+    echo -e " ${BIYellow}PILIHAN SISTEM OPERASI MANDIRI:${NC}"
+    echo -e " ${green}[${WHITE}01${green}]${NC} ${WHITE}Rebuild ke Debian Linux (12 / 11 / 10)${NC}"
+    echo -e " ${green}[${WHITE}02${green}]${NC} ${WHITE}Rebuild ke Ubuntu Linux (24.04 / 22.04 / 20.04)${NC}"
+    echo -e " ${WHITE}────────────────────────────────────────────────────────${NC}"
+    echo -e " ${green}[${WHITE}00${green}]${NC} ${WHITE}Batal & Kembali ke Menu Settings (m-setting)${NC}"
+    echo -e " ${WHITE}────────────────────────────────────────────────────────${NC}"
+    echo ""
+    read -p " Pilih opsi [00-02]: " opt
+    case "$opt" in
+        1|01) menu_debian ;;
+        2|02) menu_ubuntu ;;
+        0|00|x|X) clear; m-setting ;;
+        *) echo "Pilihan tidak valid"; sleep 1; m_rebuild ;;
+    esac
+}
+
+m_rebuild

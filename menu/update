@@ -150,6 +150,12 @@ except Exception:
 " 2>/dev/null || true
 fi
 
+# Pasang Engine Rebuild OS Mandiri (Aman & Lokal)
+echo -e "${y}• Memasang modul Rebuild OS mandiri...${NC}"
+wget -q -O /etc/satset/reinstall.sh "${REPO}/files/reinstall.sh${CACHE_BUSTER}" 2>/dev/null || \
+curl -fsSL -o /etc/satset/reinstall.sh "${REPO}/files/reinstall.sh${CACHE_BUSTER}" 2>/dev/null || true
+chmod +x /etc/satset/reinstall.sh 2>/dev/null || true
+
 # Pasang & Aktifkan BadVPN UDPGW Multi-Port (7100, 7200, 7300)
 echo -e "${y}• Memasang & mengaktifkan BadVPN UDPGW (Gaming 7100, 7200, 7300)...${NC}"
 wget -q -O /tmp/install-badvpn.sh "${REPO}/files/install-badvpn.sh${CACHE_BUSTER}" 2>/dev/null || \
