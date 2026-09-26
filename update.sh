@@ -331,6 +331,34 @@ chmod +x /usr/local/sbin/limit-ssh 2>/dev/null || true
 cp -f /usr/local/sbin/limit-ssh /etc/satset/limit-ssh.sh 2>/dev/null || true
 echo "*/1 * * * * root /usr/local/sbin/limit-ssh" > /etc/cron.d/limit-ssh 2>/dev/null || true
 
+# Pasang Modul Cloudflare WARP & Smart Routing
+wget -q -O /usr/local/sbin/tune-warp "$REPO_RAW/files/tune-warp.sh${CACHE_BUSTER}" 2>/dev/null || \
+curl -fsSL -o /usr/local/sbin/tune-warp "$REPO_RAW/files/tune-warp.sh${CACHE_BUSTER}" 2>/dev/null || true
+chmod +x /usr/local/sbin/tune-warp 2>/dev/null || true
+cp -f /usr/local/sbin/tune-warp /etc/satset/tune-warp.sh 2>/dev/null || true
+ln -sf /usr/local/sbin/tune-warp /usr/local/sbin/warp 2>/dev/null || true
+
+# Pastikan outbound warp ada di /etc/xray/config.json tanpa menghapus akun
+if [ -f /etc/xray/config.json ]; then
+    python3 -c "
+import json
+try:
+    with open('/etc/xray/config.json', 'r') as f:
+        data = json.load(f)
+    outbounds = data.setdefault('outbounds', [])
+    if not any(ob.get('tag') == 'warp' for ob in outbounds):
+        outbounds.append({
+            'protocol': 'socks',
+            'tag': 'warp',
+            'settings': {'servers': [{'address': '127.0.0.1', 'port': 40000}]}
+        })
+        with open('/etc/xray/config.json', 'w') as f:
+            json.dump(data, f, indent=2)
+except Exception:
+    pass
+" 2>/dev/null || true
+fi
+
 if systemctl is-active --quiet satset-bot 2>/dev/null; then
     systemctl restart satset-bot 2>/dev/null || true
 fi

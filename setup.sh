@@ -556,8 +556,12 @@ EOF
   wget -q -O /usr/local/sbin/limit-ssh "${REPO}files/limit-ssh.sh" >/dev/null 2>&1 || true
   chmod +x /usr/local/sbin/limit-ssh 2>/dev/null || true
   mkdir -p /etc/satset /run/satset
-  cp -f /usr/local/sbin/limit-ssh /etc/satset/limit-ssh.sh 2>/dev/null || true
   echo "*/1 * * * * root /usr/local/sbin/limit-ssh" > /etc/cron.d/limit-ssh 2>/dev/null || true
+
+  wget -q -O /usr/local/sbin/tune-warp "${REPO}files/tune-warp.sh" >/dev/null 2>&1 || true
+  chmod +x /usr/local/sbin/tune-warp 2>/dev/null || true
+  cp -f /usr/local/sbin/tune-warp /etc/satset/tune-warp.sh 2>/dev/null || true
+  ln -sf /usr/local/sbin/tune-warp /usr/local/sbin/warp 2>/dev/null || true
 
   echo -e "${YELLOW} Mengoptimasi network interfaces & akselerasi hardware offloading...${NC}"
   for interface in $(ip -o -4 addr show | awk '{print $2}' | grep -v "lo" | cut -d/ -f1); do

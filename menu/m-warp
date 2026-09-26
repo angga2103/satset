@@ -1,0 +1,176 @@
+#!/bin/bash
+# ==========================================================
+# SATSET Cloudflare WARP Manager UI (m-warp)
+# Developed for MAS ANSOR PROJECT / SATSET VPS Automation
+# ==========================================================
+clear
+
+TUNE_WARP="/usr/local/sbin/tune-warp"
+if [ ! -f "$TUNE_WARP" ] && [ -f /etc/satset/tune-warp.sh ]; then
+    TUNE_WARP="/etc/satset/tune-warp.sh"
+fi
+
+# Colors
+y='\033[1;33m'
+CYAN='\033[96m'
+Putih='\033[97m'
+RED='\033[0;31m'
+NC='\033[0m'
+green='\033[0;32m'
+BIGreen='\033[1;92m'
+BIYellow='\033[1;93m'
+BIWhite='\033[1;97m'
+BICyan='\033[1;96m'
+Lime='\e[38;5;155m'
+
+WARP_PORT="40000"
+
+get_warp_status() {
+    local port_stat="${RED}[ CLOSED ]${NC}"
+    local svc_stat="${RED}[ STOPPED ]${NC}"
+    local warp_ip="-"
+    local xray_mode="UNKNOWN"
+
+    if ss -tlnp 2>/dev/null | grep -q ":${WARP_PORT}\b"; then
+        port_stat="${green}[ LISTENING:40000 ]${NC}"
+        warp_ip=$(curl -s -x "socks5h://127.0.0.1:${WARP_PORT}" --max-time 3 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep "^ip=" | cut -d= -f2 || true)
+        [ -z "$warp_ip" ] && warp_ip="Aktif (Tersembunyi)"
+    fi
+
+    if systemctl is-active --quiet warp-svc 2>/dev/null; then
+        svc_stat="${green}[ RUNNING (warp-svc) ]${NC}"
+    elif systemctl is-active --quiet warp-go 2>/dev/null; then
+        svc_stat="${green}[ RUNNING (warp-go) ]${NC}"
+    fi
+
+    if [ -f /etc/xray/config.json ]; then
+        xray_mode=$(python3 -c "
+import json
+try:
+    with open('/etc/xray/config.json') as f:
+        data = json.load(f)
+    rules = data.get('routing', {}).get('rules', [])
+    warp_rule = next((r for r in rules if r.get('outboundTag') == 'warp'), None)
+    if not warp_rule:
+        print('OFF')
+    elif warp_rule.get('network') == 'tcp,udp' and not warp_rule.get('domain'):
+        print('FULL')
+    else:
+        print('SMART')
+except Exception:
+    print('OFF')
+" 2>/dev/null || echo "OFF")
+    fi
+
+    local mode_display="${y}[ DIRECT (OFF) ]${NC}"
+    if [ "$xray_mode" == "SMART" ]; then
+        mode_display="${green}[ SMART MEDIA & AI ]${NC}"
+    elif [ "$xray_mode" == "FULL" ]; then
+        mode_display="${BICyan}[ FULL WARP ]${NC}"
+    fi
+
+    echo -e "${BIWhite}┌────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${BIWhite}│${NC}           ${BIGreen}CLOUDFLARE WARP MANAGER${NC} - ${BIYellow}MAS ANSOR PROJECT${NC}   ${BIWhite}│${NC}"
+    echo -e "${BIWhite}├────────────────────────────────────────────────────────┤${NC}"
+    echo -e "${BIWhite}│${NC}  • Status Service    : $svc_stat"
+    echo -e "${BIWhite}│${NC}  • SOCKS5 Local Port : $port_stat"
+    echo -e "${BIWhite}│${NC}  • Cloudflare IP     : ${Lime}${warp_ip}${NC}"
+    echo -e "${BIWhite}│${NC}  • Xray Routing Mode : $mode_display"
+    echo -e "${BIWhite}└────────────────────────────────────────────────────────┘${NC}"
+}
+
+m_warp() {
+    clear
+    get_warp_status
+    echo ""
+    echo -e " ${BIYellow}PILIHAN MANAJEMEN CLOUDFLARE WARP:${NC}"
+    echo -e " ${green}[${BIWhite}01${green}]${NC} ${BIWhite}Pasang / Install Cloudflare WARP Client${NC}"
+    echo -e " ${green}[${BIWhite}02${green}]${NC} ${Lime}Aktifkan WARP Smart Routing (Netflix, ChatGPT, Disney+)${NC} ⭐"
+    echo -e " ${green}[${BIWhite}03${green}]${NC} ${BIWhite}Aktifkan WARP Global (Seluruh Trafik Xray lewat WARP)${NC}"
+    echo -e " ${green}[${BIWhite}04${green}]${NC} ${BIWhite}Matikan Routing WARP (Kembali ke Direct Outbound)${NC}"
+    echo -e " ${green}[${BIWhite}05${green}]${NC} ${BICyan}Tes Buka Blokir Streaming & AI (Netflix & ChatGPT Check)${NC}"
+    echo -e " ${green}[${BIWhite}06${green}]${NC} ${BIWhite}Restart Service Cloudflare WARP${NC}"
+    echo -e " ${green}[${BIWhite}07${green}]${NC} ${RED}Hapus / Uninstall Cloudflare WARP${NC}"
+    echo -e " ${BIWhite}────────────────────────────────────────────────────────${NC}"
+    echo -e " ${green}[${BIWhite}00${green}]${NC} ${BIWhite}Kembali ke Menu Utama (menu)${NC}"
+    echo -e " ${BIWhite}────────────────────────────────────────────────────────${NC}"
+    echo ""
+    read -p " Pilih opsi [00-07]: " opt
+    echo ""
+
+    case "$opt" in
+        1|01)
+            clear
+            bash "$TUNE_WARP" install
+            echo ""
+            echo -ne "${BICyan}Tekan tombol apa saja untuk kembali ke menu...${NC}"
+            read -n 1 -s -r
+            m_warp
+            ;;
+        2|02)
+            clear
+            bash "$TUNE_WARP" smart
+            echo ""
+            echo -ne "${BICyan}Tekan tombol apa saja untuk kembali ke menu...${NC}"
+            read -n 1 -s -r
+            m_warp
+            ;;
+        3|03)
+            clear
+            bash "$TUNE_WARP" full
+            echo ""
+            echo -ne "${BICyan}Tekan tombol apa saja untuk kembali ke menu...${NC}"
+            read -n 1 -s -r
+            m_warp
+            ;;
+        4|04)
+            clear
+            bash "$TUNE_WARP" off
+            echo ""
+            echo -ne "${BICyan}Tekan tombol apa saja untuk kembali ke menu...${NC}"
+            read -n 1 -s -r
+            m_warp
+            ;;
+        5|05)
+            clear
+            bash "$TUNE_WARP" test
+            echo ""
+            echo -ne "${BICyan}Tekan tombol apa saja untuk kembali ke menu...${NC}"
+            read -n 1 -s -r
+            m_warp
+            ;;
+        6|06)
+            clear
+            bash "$TUNE_WARP" restart
+            echo ""
+            echo -ne "${BICyan}Tekan tombol apa saja untuk kembali ke menu...${NC}"
+            read -n 1 -s -r
+            m_warp
+            ;;
+        7|07)
+            clear
+            echo -e "${RED}Peringatan: Cloudflare WARP akan dihapus dari sistem.${NC}"
+            read -p "Apakah Anda yakin ingin menghapus WARP? [y/N]: " confirm
+            if [[ "$confirm" =~ ^[yY]$ ]]; then
+                bash "$TUNE_WARP" uninstall
+            else
+                echo -e "Penghapusan dibatalkan."
+            fi
+            echo ""
+            echo -ne "${BICyan}Tekan tombol apa saja untuk kembali ke menu...${NC}"
+            read -n 1 -s -r
+            m_warp
+            ;;
+        0|00|x|X)
+            clear
+            menu
+            ;;
+        *)
+            echo -e "${RED}Pilihan tidak valid!${NC}"
+            sleep 1
+            m_warp
+            ;;
+    esac
+}
+
+m_warp
