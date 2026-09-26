@@ -62,35 +62,34 @@ apply_anti_ddos() {
     # Create / Flush SATSET_DDOS chain
     iptables -N SATSET_DDOS 2>/dev/null || iptables -F SATSET_DDOS
 
-    # 1. Drop INVALID packets
-    iptables -A SATSET_DDOS -m state --state INVALID -j DROP 2>/dev/null || true
+    # 0. Always accept established and related traffic instantly with zero overhead (prevents dropping active VPN connections)
+    iptables -A SATSET_DDOS -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
 
-    # 2. Drop stealth scan / invalid flags
+    # 1. Drop stealth scan / invalid flags
     iptables -A SATSET_DDOS -p tcp --tcp-flags ALL NONE -j DROP 2>/dev/null || true
     iptables -A SATSET_DDOS -p tcp --tcp-flags ALL ALL -j DROP 2>/dev/null || true
     iptables -A SATSET_DDOS -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP 2>/dev/null || true
     iptables -A SATSET_DDOS -p tcp --tcp-flags SYN,RST SYN,RST -j DROP 2>/dev/null || true
 
-    # 3. Drop new connection without SYN
-    iptables -A SATSET_DDOS -p tcp ! --syn -m state --state NEW -j DROP 2>/dev/null || true
-
-    # 4. Limit TCP SYN flood (300/s with burst 500)
+    # 2. Limit TCP SYN flood (300/s with burst 500)
     iptables -A SATSET_DDOS -p tcp --syn -m limit --limit 300/s --limit-burst 500 -j RETURN 2>/dev/null || true
     iptables -A SATSET_DDOS -p tcp --syn -j DROP 2>/dev/null || true
 
-    # 5. Limit concurrent connections per IP (Max 500 simultaneous connections per IP)
-    iptables -A SATSET_DDOS -p tcp -m connlimit --connlimit-above 500 --connlimit-mask 32 -j DROP 2>/dev/null || true
+    # 3. Limit concurrent connections per IP (Max 1000 connections to support CDN/Cloudflare gateways)
+    iptables -A SATSET_DDOS -p tcp -m connlimit --connlimit-above 1000 -j DROP 2>/dev/null || true
 
-    # 6. UDP rate limit (1000/s burst 2000 for gaming and DNS)
-    iptables -A SATSET_DDOS -p udp -m limit --limit 1000/s --limit-burst 2000 -j RETURN 2>/dev/null || true
+    # 4. UDP rate limit (1500/s burst 3000 for gaming and DNS)
+    iptables -A SATSET_DDOS -p udp -m limit --limit 1500/s --limit-burst 3000 -j RETURN 2>/dev/null || true
 
-    # 7. Limit ICMP ping flood (20/s burst 50)
-    iptables -A SATSET_DDOS -p icmp -m limit --limit 20/s --limit-burst 50 -j RETURN 2>/dev/null || true
+    # 5. Limit ICMP ping flood (30/s burst 60)
+    iptables -A SATSET_DDOS -p icmp -m limit --limit 30/s --limit-burst 60 -j RETURN 2>/dev/null || true
     iptables -A SATSET_DDOS -p icmp -j DROP 2>/dev/null || true
 
-    # Insert SATSET_DDOS at top of INPUT chain
+    # Insert ESTABLISHED,RELATED and SATSET_DDOS at top of INPUT chain
     iptables -D INPUT -j SATSET_DDOS 2>/dev/null || true
-    iptables -I INPUT 1 -j SATSET_DDOS 2>/dev/null || true
+    iptables -D INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+    iptables -I INPUT 1 -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+    iptables -I INPUT 2 -j SATSET_DDOS 2>/dev/null || true
 
     # Clean up any heavy packet string inspection rules (Xray routing handles torrents at L7)
     TORRENT_STRINGS=("BitTorrent" "BitTorrent protocol" "peer_id=" ".torrent" "announce.php?passkey=" "info_hash")

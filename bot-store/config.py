@@ -12,10 +12,10 @@ DEFAULT_CONFIG = {
     "PRICE_MONTHLY": 8000,
     "PRICE_PAYG_DAILY": 300,
     "PRICE_PAYG_10GB": 1000,
-    "DEFAULT_IP_LIMIT": 1,
+    "DEFAULT_IP_LIMIT": 2,
     "DEFAULT_QUOTA_GB": 350,  # 350 GB (0 = unlimited)
     "SUSPEND_DURATION_MINUTES": 10,  # Auto-suspend duration in minutes
-    "AUTO_SUSPEND_ENABLED": 1,  # 1 = auto suspend on IP violation, 0 = notify only
+    "AUTO_SUSPEND_ENABLED": 0,  # 0 = notify only (mencegah Xray sering restart dan koneksi putus-nyambung), 1 = auto suspend
     "NOTIFY_VIOLATIONS": 1,  # 1 = send Telegram alerts on violation
     "CURRENCY": "Rp"
 }

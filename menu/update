@@ -159,6 +159,25 @@ if [ -f /etc/xray/domain ]; then
     fi
 fi
 
+# Nonaktifkan limiter legacy lama yang menyebabkan Xray restart berulang setiap menit
+LIMIT_SERVICES=(limiter-vm limiter-vl limiter-trj limiter-shd limitvmess limitvless limittrojan limitshadowsocks)
+for s in "${LIMIT_SERVICES[@]}"; do
+    systemctl stop "$s.timer" "$s.service" 2>/dev/null || true
+    systemctl disable "$s.timer" "$s.service" 2>/dev/null || true
+done
+
+# Pastikan fail2ban tidak memblokir koneksi lokal dan WebSocket
+if [ -f /etc/fail2ban/jail.d/basic.conf ]; then
+    cat >/etc/fail2ban/jail.d/basic.conf <<'EOF'
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1
+
+[sshd]
+enabled = true
+EOF
+    systemctl restart fail2ban 2>/dev/null || true
+fi
+
 echo -e "${green}✓ Berkas Bot Store, SSH WS, & Optimasi Jaringan berhasil diperbarui.${NC}"
 
 echo -e "${y}[3/3] Memeriksa status service bot...${NC}"

@@ -46,9 +46,10 @@ def pipe_client_to_backend(src, dst):
     buf = b""
     try:
         while True:
-            r, _, _ = select.select([src], [], [], 60)
+            r, _, _ = select.select([src], [], [], 30)
             if not r:
-                break
+                # Idle timeout reached, socket is still alive; continue listening
+                continue
             data = src.recv(BUFFER_SIZE)
             if not data:
                 break
@@ -95,9 +96,10 @@ def pipe_backend_to_client(src, dst):
     """Pipes traffic from Dropbear back to client"""
     try:
         while True:
-            r, _, _ = select.select([src], [], [], 60)
+            r, _, _ = select.select([src], [], [], 30)
             if not r:
-                break
+                # Idle timeout reached, socket is still alive; continue listening
+                continue
             data = src.recv(BUFFER_SIZE)
             if not data:
                 break

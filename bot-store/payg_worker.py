@@ -156,21 +156,21 @@ def process_limiter_and_violations(bot=None):
                 logger.error(f"Error parsing locked_until for {uname}: {e}")
 
     # --- 2. Check active IP multi-login violations ---
-    if auto_suspend:
-        active_sessions = xray_manager.get_active_sessions()
-        for uname, ips in active_sessions.items():
-            acc = database.get_account_by_username(uname)
-            if not acc:
-                continue
+    active_sessions = xray_manager.get_active_sessions()
+    for uname, ips in active_sessions.items():
+        acc = database.get_account_by_username(uname)
+        if not acc:
+            continue
 
-            if acc.get("status") == "suspended":
-                continue
+        if acc.get("status") == "suspended":
+            continue
 
-            proto = acc.get("protocol", "vmess")
-            user_id = acc.get("user_id")
-            ip_limit = acc.get("ip_limit") or cfg.get("DEFAULT_IP_LIMIT", 1)
+        proto = acc.get("protocol", "vmess")
+        user_id = acc.get("user_id")
+        ip_limit = acc.get("ip_limit") or cfg.get("DEFAULT_IP_LIMIT", 2)
 
-            if len(ips) > ip_limit:
+        if len(ips) > ip_limit:
+            if auto_suspend:
                 logger.warning(f"Violation: user {uname} exceeded IP limit ({len(ips)} > {ip_limit}). Suspending for {suspend_duration}m...")
                 until_str = xray_manager.suspend_account(proto, uname, duration_minutes=suspend_duration, reason="multi_login")
                 
@@ -210,6 +210,8 @@ def process_limiter_and_violations(bot=None):
                             bot.send_message(admin_id, text_adm, parse_mode="HTML")
                         except Exception:
                             pass
+            else:
+                logger.info(f"Notice: user {uname} active IPs: {len(ips)} (limit: {ip_limit}). Auto-suspend disabled.")
 
     # --- 3. Check quota limits ---
     all_accounts = database.get_all_vpn_accounts_detailed(limit=200)
@@ -255,9 +257,9 @@ def run_worker_loop(bot=None):
             # 1. Check pending transactions every 10 seconds
             process_pending_transactions(bot)
 
-            # 2. Check limiter & multi-login violations every 30 seconds
+            # 2. Check limiter & multi-login violations every 60 seconds
             now_ts = time.time()
-            if now_ts - last_limiter_check >= 30:
+            if now_ts - last_limiter_check >= 60:
                 process_limiter_and_violations(bot)
                 last_limiter_check = now_ts
 

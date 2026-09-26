@@ -229,44 +229,44 @@ cat >/usr/local/sbin/firewall-limit <<'EOF'
 MODE="${1:-NORMAL}"
 iptables -N XRAY_LIMIT 2>/dev/null || true
 iptables -F XRAY_LIMIT
+iptables -A XRAY_LIMIT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
 if [[ "$MODE" == "AGRESIF" ]]; then
-  iptables -A XRAY_LIMIT -p tcp --syn -m limit --limit 100/s --limit-burst 200 -j RETURN
-  iptables -A XRAY_LIMIT -p tcp -m connlimit --connlimit-above 200 -j DROP
-else
-  iptables -A XRAY_LIMIT -p tcp --syn -m limit --limit 300/s --limit-burst 500 -j RETURN
+  iptables -A XRAY_LIMIT -p tcp --syn -m limit --limit 200/s --limit-burst 400 -j RETURN
   iptables -A XRAY_LIMIT -p tcp -m connlimit --connlimit-above 500 -j DROP
+else
+  iptables -A XRAY_LIMIT -p tcp --syn -m limit --limit 500/s --limit-burst 1000 -j RETURN
+  iptables -A XRAY_LIMIT -p tcp -m connlimit --connlimit-above 1000 -j DROP
 fi
+iptables -D INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+iptables -I INPUT 1 -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
 iptables -D INPUT -j XRAY_LIMIT 2>/dev/null || true
-iptables -I INPUT 1 -j XRAY_LIMIT
+iptables -I INPUT 2 -j XRAY_LIMIT 2>/dev/null || true
 EOF
 chmod +x /usr/local/sbin/firewall-limit
 /usr/local/sbin/firewall-limit "$IPTABLES_LIMIT_MODE"
-netfilter-persistent save
+netfilter-persistent save 2>/dev/null || true
 ok "Firewall OK"
 
 ############################################
-# FAIL2BAN
+# FAIL2BAN & SYSTEM STABILIZATION
 ############################################
 info "Setup Fail2ban"
 cat >/etc/fail2ban/jail.d/basic.conf <<'EOF'
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1
+
 [sshd]
 enabled = true
-
-[nginx-botsearch]
-enabled = true
 EOF
-systemctl enable --now fail2ban
+systemctl enable --now fail2ban 2>/dev/null || true
 ok "Fail2ban OK"
 
-############################################
-# CROWDSEC
-############################################
-info "Install CrowdSec"
-curl -fsSL https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash || warn "CrowdSec repo setup dilewati"
-apt install -y crowdsec crowdsec-firewall-bouncer-iptables || warn "CrowdSec paket dilewati"
-systemctl enable --now crowdsec crowdsec-firewall-bouncer 2>/dev/null || true
-warn "CrowdSec auto-enroll OFF (manual jika perlu)"
-ok "CrowdSec OK"
+# Nonaktifkan limiter legacy lama yang menyebabkan Xray restart berulang setiap menit
+LIMIT_SERVICES=(limiter-vm limiter-vl limiter-trj limiter-shd limitvmess limitvless limittrojan limitshadowsocks)
+for s in "${LIMIT_SERVICES[@]}"; do
+    systemctl stop "$s.timer" "$s.service" 2>/dev/null || true
+    systemctl disable "$s.timer" "$s.service" 2>/dev/null || true
+done
 
 ############################################
 # MENU REPO

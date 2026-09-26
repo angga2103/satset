@@ -164,8 +164,9 @@ function memulai_pengecekan() {
         done
 
         if [[ -s /tmp/ipvmess.txt ]]; then
-            raw_limit_ip=$(cat /etc/limit/vmess/ip/"$user" 2>/dev/null || echo 0)
-            limit_ip=$(echo "$raw_limit_ip" | grep -o '[0-9]\+')
+            raw_limit_ip=$(cat /etc/limit/vmess/ip/"$user" 2>/dev/null || echo 2)
+            limit_ip=$(echo "$raw_limit_ip" | grep -o '[0-9]\+' | head -n1)
+            [[ -z "$limit_ip" || "$limit_ip" -le 0 ]] && limit_ip=2
 
             login_count=$(wc -l < /tmp/ipvmess.txt)
 

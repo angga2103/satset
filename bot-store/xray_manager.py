@@ -518,13 +518,52 @@ def format_bytes(bytes_count: int) -> str:
     else:
         return f"{bytes_count / (1024 ** 3):.2f} GB"
 
+def is_ignored_ip(ip: str) -> bool:
+    """Filter out localhost, private ranges, and Cloudflare CDN proxy IPs"""
+    if not ip or ip in ["127.0.0.1", "0.0.0.0", "localhost"]:
+        return True
+    if ip.startswith("10.") or ip.startswith("192.168.") or ip.startswith("127."):
+        return True
+    parts = ip.split(".")
+    if len(parts) != 4:
+        return True
+    try:
+        p0, p1 = int(parts[0]), int(parts[1])
+        if p0 == 172 and 16 <= p1 <= 31:
+            return True
+        # Cloudflare CDN Anycast ranges (traffic proxied via Cloudflare)
+        if p0 == 172 and 64 <= p1 <= 71:
+            return True
+        if p0 == 104 and 16 <= p1 <= 31:
+            return True
+        if p0 == 162 and 158 <= p1 <= 159:
+            return True
+        if p0 == 108 and p1 == 162:
+            return True
+        if p0 == 141 and p1 == 101:
+            return True
+        if p0 == 198 and p1 == 41:
+            return True
+        if p0 == 188 and p1 == 114:
+            return True
+        if p0 == 197 and p1 == 234:
+            return True
+        if p0 == 190 and p1 == 93:
+            return True
+        if p0 == 103 and p1 in [21, 22, 31]:
+            return True
+    except Exception:
+        pass
+    return False
+
 def get_active_sessions() -> dict:
     """Scan Xray access log and SSH active logins for distinct connected IPs per user.
+    Only counts connections active within the last 90 seconds.
     Returns: {username: [ip1, ip2, ...]}
     """
     sessions = {}
     
-    # 1. Parse Xray access.log (Bounded tail read to prevent OOM on large logs)
+    # 1. Parse Xray access.log
     access_log = "/var/log/xray/access.log"
     if os.path.exists(access_log):
         try:
@@ -536,7 +575,18 @@ def get_active_sessions() -> dict:
                 raw_bytes = f.read()
             lines = raw_bytes.decode("utf-8", errors="ignore").splitlines()[-1500:]
             
+            now_dt = datetime.datetime.now()
             for line in lines:
+                # Filter by timestamp: only consider entries within last 90 seconds
+                ts_m = re.match(r'^(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})', line)
+                if ts_m:
+                    try:
+                        line_dt = datetime.datetime.strptime(ts_m.group(1), "%Y/%m/%d %H:%M:%S")
+                        if abs((now_dt - line_dt).total_seconds()) > 90:
+                            continue
+                    except Exception:
+                        pass
+
                 user = None
                 ip = None
                 
@@ -548,11 +598,10 @@ def get_active_sessions() -> dict:
                 if ip_m:
                     ip = ip_m.group(1).strip()
                     
-                if user and ip:
-                    if ip not in ["127.0.0.1", "0.0.0.0"]:
-                        if user not in sessions:
-                            sessions[user] = set()
-                        sessions[user].add(ip)
+                if user and ip and not is_ignored_ip(ip):
+                    if user not in sessions:
+                        sessions[user] = set()
+                    sessions[user].add(ip)
         except Exception as e:
             logger.warning(f"Error reading Xray access log: {e}")
 
@@ -569,9 +618,10 @@ def get_active_sessions() -> dict:
                     ip_match = re.search(r'\(([0-9]{1,3}(?:\.[0-9]{1,3}){3})\)', line)
                     if ip_match:
                         ssh_ip = ip_match.group(1)
-                        if u not in sessions:
-                            sessions[u] = set()
-                        sessions[u].add(ssh_ip)
+                        if not is_ignored_ip(ssh_ip):
+                            if u not in sessions:
+                                sessions[u] = set()
+                            sessions[u].add(ssh_ip)
     except Exception:
         pass
 
