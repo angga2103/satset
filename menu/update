@@ -98,6 +98,12 @@ if [ -f /etc/xray/config.json ]; then
     fi
 fi
 
+# Bersihkan legacy network-tune service yang merusak iptables & qdisc BBR
+systemctl stop network-tune.service 2>/dev/null || true
+systemctl disable network-tune.service 2>/dev/null || true
+rm -f /etc/systemd/system/network-tune.service /usr/local/sbin/network-tune.sh 2>/dev/null || true
+systemctl daemon-reload 2>/dev/null || true
+
 # Pasang & Terapkan TCP BBR Speed Booster & Proteksi Anti-DDoS
 echo -e "${y}• Memasang kernel tune TCP BBR & Firewall Anti-DDoS...${NC}"
 mkdir -p /etc/satset

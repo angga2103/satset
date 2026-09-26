@@ -189,6 +189,7 @@ def pipe_backend_to_client(src, dst, on_close=None):
 def handle_client(client_sock, client_addr):
     local_port = None
     try:
+        client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         client_sock.settimeout(15.0)
         initial_data = b""
         

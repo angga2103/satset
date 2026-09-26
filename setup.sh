@@ -559,11 +559,10 @@ EOF
   cp -f /usr/local/sbin/limit-ssh /etc/satset/limit-ssh.sh 2>/dev/null || true
   echo "*/1 * * * * root /usr/local/sbin/limit-ssh" > /etc/cron.d/limit-ssh 2>/dev/null || true
 
-  echo -e "${YELLOW} Mengoptimasi network interfaces...${NC}"
+  echo -e "${YELLOW} Mengoptimasi network interfaces & akselerasi hardware offloading...${NC}"
   for interface in $(ip -o -4 addr show | awk '{print $2}' | grep -v "lo" | cut -d/ -f1); do
       echo -e "${GREEN} Mengoptimasi $interface ${NC}"
-      ethtool -s $interface gso off gro off tso off 2>/dev/null || true
-      ethtool --offload $interface rx off tx off 2>/dev/null || true
+      ethtool -K $interface rx on tx on tso on gso on gro on 2>/dev/null || true
       CURRENT_RX=$(ethtool -g $interface 2>/dev/null | grep "RX:" | head -1 | awk '{print $2}' || true)
       CURRENT_TX=$(ethtool -g $interface 2>/dev/null | grep "TX:" | head -1 | awk '{print $2}' || true)
       if [ -n "$CURRENT_RX" ] && [ -n "$CURRENT_TX" ]; then
@@ -571,52 +570,11 @@ EOF
       fi
   done
 
-  echo -e "${YELLOW} Mengkonfigurasi QoS untuk prioritas paket...${NC}"
-  cat > /usr/local/sbin/network-tune.sh << 'EOF'
-#!/bin/bash
-iptables -F
-iptables -X
-iptables -t nat -F
-iptables -t nat -X
-iptables -t mangle -F
-iptables -t mangle -X
-iptables -P INPUT ACCEPT
-iptables -P FORWARD ACCEPT
-iptables -P OUTPUT ACCEPT
-iptables -t mangle -A PREROUTING -p tcp -m tcp --tcp-flags ACK ACK -j CLASSIFY --set-class 1:1
-iptables -t mangle -A PREROUTING -p tcp -m length --length 0:128 -j CLASSIFY --set-class 1:1
-iptables -t mangle -A PREROUTING -p udp -m length --length 0:128 -j CLASSIFY --set-class 1:1
-iptables -t mangle -A PREROUTING -p icmp -j CLASSIFY --set-class 1:1
-INTERFACES=$(ip -o -4 addr show | awk '{print $2}' | grep -v "lo" | cut -d/ -f1)
-for IFACE in $INTERFACES; do
-    tc qdisc del dev $IFACE root 2> /dev/null
-    tc qdisc add dev $IFACE root handle 1: htb default 10
-    tc class add dev $IFACE parent 1: classid 1:1 htb rate 1000mbit ceil 1000mbit prio 1
-    tc qdisc add dev $IFACE parent 1:1 fq_codel quantum 300 ecn
-done
-EOF
-
-  chmod +x /usr/local/sbin/network-tune.sh
-  /usr/local/sbin/network-tune.sh
-
-  echo -e "${YELLOW} Membuat systemd service...${NC}"
-  cat > /etc/systemd/system/network-tune.service << EOF
-[Unit]
-Description=Network Optimization for Low Latency
-After=network.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/network-tune.sh
-RemainAfterExit=true
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-  systemctl daemon-reload
-  systemctl enable network-tune.service
-  systemctl start network-tune.service
+  # Bersihkan legacy network-tune service jika ada
+  systemctl stop network-tune.service 2>/dev/null || true
+  systemctl disable network-tune.service 2>/dev/null || true
+  rm -f /etc/systemd/system/network-tune.service /usr/local/sbin/network-tune.sh 2>/dev/null || true
+  systemctl daemon-reload 2>/dev/null || true
 
   total_ram=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
   if [ "$total_ram" -le 4096 ]; then

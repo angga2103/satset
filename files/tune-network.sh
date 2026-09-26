@@ -37,10 +37,30 @@ net.ipv4.tcp_wmem = 4096 65536 33554432
 net.ipv4.ip_local_port_range = 1024 65535
 fs.file-max = 1000000
 vm.swappiness = 10
+
+# Low-Latency & Bufferbloat Reduction Parameters
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_notsent_lowat = 16384
+net.ipv4.tcp_autocorking = 0
+net.ipv4.tcp_no_metrics_save = 1
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_low_latency = 1
+net.ipv4.tcp_timestamps = 1
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_window_scaling = 1
+net.core.busy_poll = 50
+net.core.busy_read = 50
 EOF
 
     # Apply sysctl settings
     sysctl --system >/dev/null 2>&1 || sysctl -p /etc/sysctl.d/99-network-tune.conf >/dev/null 2>&1 || true
+
+    # Reset any legacy / broken qdisc and enable NIC hardware offloading on active interfaces
+    for iface in $(ip -o -4 addr show 2>/dev/null | awk '{print $2}' | grep -v "lo" | sort -u); do
+        tc qdisc del dev "$iface" root 2>/dev/null || true
+        tc qdisc add dev "$iface" root fq 2>/dev/null || true
+        ethtool -K "$iface" rx on tx on tso on gso on gro on 2>/dev/null || true
+    done
 
     curr_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "unknown")
     curr_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "unknown")

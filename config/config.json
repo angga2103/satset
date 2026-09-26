@@ -207,7 +207,15 @@
     {
       "protocol": "freedom",
       "tag": "direct",
-      "settings": {}
+      "settings": {
+        "domainStrategy": "UseIP"
+      },
+      "streamSettings": {
+        "sockopt": {
+          "tcpFastOpen": true,
+          "tcpNoDelay": true
+        }
+      }
     },
     {
       "protocol": "blackhole",

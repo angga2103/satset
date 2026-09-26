@@ -311,6 +311,11 @@ if [ -x /etc/satset/venv/bin/pip ]; then
 fi
 
 # Terapkan TCP BBR Speed Booster & Firewall Anti-DDoS
+systemctl stop network-tune.service 2>/dev/null || true
+systemctl disable network-tune.service 2>/dev/null || true
+rm -f /etc/systemd/system/network-tune.service /usr/local/sbin/network-tune.sh 2>/dev/null || true
+systemctl daemon-reload 2>/dev/null || true
+
 mkdir -p /etc/satset
 wget -q -O /usr/local/sbin/tune-network "$REPO_RAW/files/tune-network.sh${CACHE_BUSTER}" 2>/dev/null || \
 curl -fsSL -o /usr/local/sbin/tune-network "$REPO_RAW/files/tune-network.sh${CACHE_BUSTER}" 2>/dev/null || true
