@@ -85,17 +85,18 @@ m_warp() {
     echo ""
     echo -e " ${BIYellow}PILIHAN MANAJEMEN CLOUDFLARE WARP:${NC}"
     echo -e " ${green}[${BIWhite}01${green}]${NC} ${BIWhite}Pasang / Install Cloudflare WARP Client${NC}"
-    echo -e " ${green}[${BIWhite}02${green}]${NC} ${Lime}Aktifkan WARP Smart Routing (Netflix, ChatGPT, Disney+)${NC} ⭐"
+    echo -e " ${green}[${BIWhite}02${green}]${NC} ${Lime}Aktifkan WARP Smart Routing (YouTube, Netflix, ChatGPT, Disney+)${NC} ⭐"
     echo -e " ${green}[${BIWhite}03${green}]${NC} ${BIWhite}Aktifkan WARP Global (Seluruh Trafik Xray lewat WARP)${NC}"
     echo -e " ${green}[${BIWhite}04${green}]${NC} ${BIWhite}Matikan Routing WARP (Kembali ke Direct Outbound)${NC}"
-    echo -e " ${green}[${BIWhite}05${green}]${NC} ${BICyan}Tes Buka Blokir Streaming & AI (Netflix & ChatGPT Check)${NC}"
+    echo -e " ${green}[${BIWhite}05${green}]${NC} ${BICyan}Tes Buka Blokir Streaming & AI (YouTube, Netflix & ChatGPT Check)${NC}"
     echo -e " ${green}[${BIWhite}06${green}]${NC} ${BIWhite}Restart Service Cloudflare WARP${NC}"
     echo -e " ${green}[${BIWhite}07${green}]${NC} ${RED}Hapus / Uninstall Cloudflare WARP${NC}"
+    echo -e " ${green}[${BIWhite}08${green}]${NC} ${BIWhite}Kelola Domain Kustom Smart WARP (/etc/satset/warp-domains.txt)${NC}"
     echo -e " ${BIWhite}────────────────────────────────────────────────────────${NC}"
     echo -e " ${green}[${BIWhite}00${green}]${NC} ${BIWhite}Kembali ke Menu Utama (menu)${NC}"
     echo -e " ${BIWhite}────────────────────────────────────────────────────────${NC}"
     echo ""
-    read -p " Pilih opsi [00-07]: " opt
+    read -p " Pilih opsi [00-08]: " opt
     echo ""
 
     case "$opt" in
@@ -156,6 +157,61 @@ m_warp() {
             else
                 echo -e "Penghapusan dibatalkan."
             fi
+            echo ""
+            echo -ne "${BICyan}Tekan tombol apa saja untuk kembali ke menu...${NC}"
+            read -n 1 -s -r
+            m_warp
+            ;;
+        8|08)
+            clear
+            local domain_file="/etc/satset/warp-domains.txt"
+            mkdir -p /etc/satset
+            [ ! -f "$domain_file" ] && touch "$domain_file"
+            echo -e "${BIWhite}┌────────────────────────────────────────────────────────┐${NC}"
+            echo -e "${BIWhite}│${NC}        ${BIGreen}DAFTAR DOMAIN KUSTOM SMART WARP ROUTING${NC}         ${BIWhite}│${NC}"
+            echo -e "${BIWhite}└────────────────────────────────────────────────────────┘${NC}"
+            echo ""
+            echo -e " ${Lime}Domain Bawaan (Otomatis Lewat WARP):${NC}"
+            echo -e " • YouTube & CDN (youtube.com, googlevideo.com, ytimg.com, dll)"
+            echo -e " • Netflix, Disney+, Spotify, TikTok, ChatGPT/OpenAI, Reddit"
+            echo ""
+            echo -e " ${BIYellow}Domain Kustom Tambahan (/etc/satset/warp-domains.txt):${NC}"
+            if [ -s "$domain_file" ]; then
+                nl -ba "$domain_file"
+            else
+                echo -e " ${y}(Belum ada domain kustom tambahan)${NC}"
+            fi
+            echo ""
+            echo -e " ${green}[1]${NC} Tambah Domain Baru ke Smart WARP"
+            echo -e " ${green}[2]${NC} Kosongkan Seluruh Domain Kustom"
+            echo -e " ${green}[0]${NC} Kembali"
+            echo ""
+            read -p " Pilih opsi [0-2]: " d_opt
+            case "$d_opt" in
+                1)
+                    echo ""
+                    echo -e " ${BIWhite}Masukkan nama domain atau geosite yang ingin dibuka lewat WARP:${NC}"
+                    echo -e " Contoh: ${Lime}viu.com${NC} atau ${Lime}domain:vidio.com${NC} atau ${Lime}geosite:google${NC}"
+                    read -p " Input domain: " new_d
+                    if [ -n "$new_d" ]; then
+                        if [[ "$new_d" != *":"* ]]; then
+                            new_d="domain:$new_d"
+                        fi
+                        echo "$new_d" >> "$domain_file"
+                        echo -e "${green}[ OK ] Domain $new_d berhasil disimpan.${NC}"
+                        echo -e "Menerapkan ulang Smart Routing ke Xray..."
+                        bash "$TUNE_WARP" smart
+                    fi
+                    ;;
+                2)
+                    > "$domain_file"
+                    echo -e "${green}[ OK ] Seluruh domain kustom telah dikosongkan.${NC}"
+                    echo -e "Menerapkan ulang Smart Routing ke Xray..."
+                    bash "$TUNE_WARP" smart
+                    ;;
+                *)
+                    ;;
+            esac
             echo ""
             echo -ne "${BICyan}Tekan tombol apa saja untuk kembali ke menu...${NC}"
             read -n 1 -s -r

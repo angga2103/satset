@@ -292,6 +292,7 @@ STREAMING_DOMAINS = [
     "geosite:disney",
     "geosite:spotify",
     "geosite:tiktok",
+    "geosite:youtube",
     "domain:openai.com",
     "domain:chatgpt.com",
     "domain:oaistatic.com",
@@ -306,10 +307,31 @@ STREAMING_DOMAINS = [
     "domain:disney.com",
     "domain:dssott.com",
     "domain:bamgrid.com",
+    "domain:youtube.com",
+    "domain:googlevideo.com",
+    "domain:ytimg.com",
+    "domain:youtu.be",
+    "domain:youtubei.googleapis.com",
+    "domain:yt.be",
     "domain:reddit.com",
     "domain:redd.it",
     "domain:ipinfo.io"
 ]
+
+import os
+custom_domains_file = "/etc/satset/warp-domains.txt"
+if os.path.exists(custom_domains_file):
+    try:
+        with open(custom_domains_file, "r") as cf:
+            for line in cf:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    if not any(line.startswith(p) for p in ("domain:", "geosite:", "regexp:", "full:")):
+                        line = f"domain:{line}"
+                    if line not in STREAMING_DOMAINS:
+                        STREAMING_DOMAINS.append(line)
+    except Exception:
+        pass
 
 if mode == "smart":
     # Insert smart media/AI rule right before the catch-all direct rule
@@ -384,7 +406,7 @@ set_xray_mode() {
     if patch_xray_config "$mode"; then
         case "$mode" in
             smart)
-                msg_ok "Mode SMART AKTIF: Netflix, Disney+, ChatGPT, Reddit, TikTok diarahkan lewat Cloudflare WARP."
+                msg_ok "Mode SMART AKTIF: YouTube, Netflix, Disney+, ChatGPT, Reddit, TikTok diarahkan lewat Cloudflare WARP."
                 msg_ok "Akses web lainnya tetap direct (ping rendah & kecepatan maksimal)."
                 ;;
             full)
@@ -430,7 +452,18 @@ test_unlock() {
         echo -e "${RED}[ TIMEOUT / GAGAL ]${NC}"
     fi
 
-    # 2. Uji Netflix Unlock
+    # 2. Uji YouTube Unlock (Bypass ISP / Datacenter Block)
+    echo -ne "• Menguji Akses YouTube (Bypass Datacenter Block)... "
+    local yt_code=$(curl -s -o /dev/null -w "%{http_code}" -x "socks5h://127.0.0.1:${WARP_PORT}" --max-time 8 "https://www.youtube.com" 2>/dev/null || echo "000")
+    if [ "$yt_code" == "200" ] || [ "$yt_code" == "301" ] || [ "$yt_code" == "302" ]; then
+        echo -e "${GREEN}[ UNLOCKED / AKSES LANCAR ] (Code: $yt_code)${NC}"
+    elif [ "$yt_code" == "429" ] || [ "$yt_code" == "403" ]; then
+        echo -e "${RED}[ BLOCKED / CAPTCHA ROBOT ] (Code: $yt_code)${NC}"
+    else
+        echo -e "${YELLOW}[ RESPON LAIN ] (Code: $yt_code)${NC}"
+    fi
+
+    # 3. Uji Netflix Unlock
     echo -ne "• Menguji Akses Netflix (Bypass Datacenter Block)... "
     local nf_code=$(curl -s -o /dev/null -w "%{http_code}" -x "socks5h://127.0.0.1:${WARP_PORT}" --max-time 8 "https://www.netflix.com/title/80018499" 2>/dev/null || echo "000")
     if [ "$nf_code" == "200" ]; then
@@ -441,7 +474,7 @@ test_unlock() {
         echo -e "${RED}[ BLOCKED / TIMEOUT ] (Code: $nf_code)${NC}"
     fi
 
-    # 3. Uji OpenAI / ChatGPT Access
+    # 4. Uji OpenAI / ChatGPT Access
     echo -ne "• Menguji Akses ChatGPT / OpenAI... "
     local ai_code=$(curl -s -o /dev/null -w "%{http_code}" -x "socks5h://127.0.0.1:${WARP_PORT}" --max-time 8 "https://chatgpt.com" 2>/dev/null || echo "000")
     if [ "$ai_code" == "200" ] || [ "$ai_code" == "307" ] || [ "$ai_code" == "302" ]; then
@@ -452,7 +485,7 @@ test_unlock() {
         echo -e "${YELLOW}[ RESPON LAIN ] (Code: $ai_code)${NC}"
     fi
 
-    # 4. Mode Xray saat ini
+    # 5. Mode Xray saat ini
     local current_mode=$(get_current_mode)
     echo ""
     echo -e "• Mode Routing Xray Aktif : ${CYAN}[ ${current_mode} ]${NC}"
