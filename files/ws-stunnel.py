@@ -10,6 +10,10 @@ import socket
 import select
 import threading
 import logging
+import json
+import os
+import time
+import re
 
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = 10015
@@ -17,6 +21,60 @@ TARGET_HOST = "127.0.0.1"
 TARGET_PORT = 109   # Dropbear port (fallback to 22 OpenSSH if dropbear is down)
 FALLBACK_PORT = 22  # OpenSSH port
 BUFFER_SIZE = 65536
+SESSION_FILE = "/run/satset/ws_sessions.json"
+
+SESSION_MAP_LOCK = threading.Lock()
+ACTIVE_WS_SESSIONS = {}
+
+def record_ws_session(local_port: int, client_ip: str):
+    if not local_port:
+        return
+    with SESSION_MAP_LOCK:
+        ACTIVE_WS_SESSIONS[str(local_port)] = {
+            "ip": client_ip,
+            "connected_at": int(time.time())
+        }
+        _write_session_file()
+
+def remove_ws_session(local_port: int):
+    if not local_port:
+        return
+    with SESSION_MAP_LOCK:
+        if str(local_port) in ACTIVE_WS_SESSIONS:
+            ACTIVE_WS_SESSIONS.pop(str(local_port), None)
+            _write_session_file()
+
+def _write_session_file():
+    try:
+        os.makedirs(os.path.dirname(SESSION_FILE), exist_ok=True)
+        tmp = SESSION_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(ACTIVE_WS_SESSIONS, f)
+        os.replace(tmp, SESSION_FILE)
+    except Exception:
+        pass
+
+def extract_real_ip(initial_data: bytes, fallback_ip: str) -> str:
+    try:
+        header_text = initial_data.decode("latin1", errors="ignore")
+        m_xff = re.search(r'(?i)x-forwarded-for:\s*([^\r\n]+)', header_text)
+        if m_xff:
+            raw_ips = [ip.strip() for ip in m_xff.group(1).split(",")]
+            for rip in raw_ips:
+                if re.match(r'^[0-9]{1,3}(?:\.[0-9]{1,3}){3}$', rip):
+                    if not (rip.startswith("10.") or rip.startswith("192.168.") or rip.startswith("127.")):
+                        return rip
+            if raw_ips and re.match(r'^[0-9]{1,3}(?:\.[0-9]{1,3}){3}$', raw_ips[0]):
+                return raw_ips[0]
+
+        m_rip = re.search(r'(?i)x-real-ip:\s*([^\r\n]+)', header_text)
+        if m_rip:
+            rip = m_rip.group(1).strip()
+            if re.match(r'^[0-9]{1,3}(?:\.[0-9]{1,3}){3}$', rip):
+                return rip
+    except Exception:
+        pass
+    return fallback_ip
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,7 +98,7 @@ HTTP_200_OK = (
     b"OK"
 )
 
-def pipe_client_to_backend(src, dst):
+def pipe_client_to_backend(src, dst, on_close=None):
     """Pipes traffic from client to Dropbear, stripping split/dummy HTTP payloads (e.g. HTTP/ 69)"""
     ssh_started = False
     buf = b""
@@ -91,8 +149,13 @@ def pipe_client_to_backend(src, dst):
             pass
         src.close()
         dst.close()
+        if on_close:
+            try:
+                on_close()
+            except Exception:
+                pass
 
-def pipe_backend_to_client(src, dst):
+def pipe_backend_to_client(src, dst, on_close=None):
     """Pipes traffic from Dropbear back to client"""
     try:
         while True:
@@ -117,8 +180,14 @@ def pipe_backend_to_client(src, dst):
             pass
         src.close()
         dst.close()
+        if on_close:
+            try:
+                on_close()
+            except Exception:
+                pass
 
 def handle_client(client_sock, client_addr):
+    local_port = None
     try:
         client_sock.settimeout(15.0)
         initial_data = b""
@@ -180,6 +249,18 @@ def handle_client(client_sock, client_addr):
         except Exception:
             pass
 
+        # Record real client IP mapping for Dropbear local socket
+        try:
+            local_port = backend_sock.getsockname()[1]
+            real_ip = extract_real_ip(initial_data, client_addr[0])
+            record_ws_session(local_port, real_ip)
+        except Exception:
+            pass
+
+        def on_session_close():
+            if local_port:
+                remove_ws_session(local_port)
+
         if is_http:
             # Upgrade WebSocket handshake
             client_sock.sendall(WS_RESPONSE_101)
@@ -194,13 +275,15 @@ def handle_client(client_sock, client_addr):
             backend_sock.sendall(initial_data)
 
         # Start two-way piping with split payload filtering
-        t1 = threading.Thread(target=pipe_client_to_backend, args=(client_sock, backend_sock), daemon=True)
-        t2 = threading.Thread(target=pipe_backend_to_client, args=(backend_sock, client_sock), daemon=True)
+        t1 = threading.Thread(target=pipe_client_to_backend, args=(client_sock, backend_sock, on_session_close), daemon=True)
+        t2 = threading.Thread(target=pipe_backend_to_client, args=(backend_sock, client_sock, on_session_close), daemon=True)
         t1.start()
         t2.start()
 
     except Exception as e:
         logger.debug(f"Client handler error from {client_addr}: {e}")
+        if local_port:
+            remove_ws_session(local_port)
         try:
             client_sock.close()
         except Exception:

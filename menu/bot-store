@@ -31,9 +31,10 @@ while true; do
     echo -e " [6] Kelola Rules Dinamis (IP, Kuota, Suspen, Harga)"
     echo -e " [7] Live Monitor User Login & Kuota Pemakaian"
     echo -e " [8] Daftar & Buka Kunci Akun Terkunci (Unban)"
+    echo -e " [9] Sinkronkan Akun VPS & Bot Store"
     echo -e " [0] Keluar"
     echo -e "${BLUE}====================================================${NC}"
-    read -rp "Pilih menu [0-8]: " opt
+    read -rp "Pilih menu [0-9]: " opt
     case "$opt" in
         1)
             journalctl -u satset-bot -f -n 50
@@ -200,6 +201,18 @@ xray_manager.unsuspend_account(proto, u)
 print(f'Akun {u} berhasil di-unban!')
 " "$unb_u"
             fi
+            read -rp "Tekan Enter untuk kembali..."
+            ;;
+        9)
+            echo -e "${YELLOW}Mensinkronkan akun antara VPS dan Bot Store...${NC}"
+            $PYTHON_BIN -c "
+import sys; sys.path.append('/etc/satset/bot-store')
+import xray_manager
+res = xray_manager.sync_all_accounts()
+print('\033[0;32m✓ Selesai!\033[0m')
+print(f'• Dipulihkan ke VPS : {len(res.get(\"to_vps\", []))} akun')
+print(f'• Diimpor ke Bot    : {len(res.get(\"to_db\", []))} akun')
+"
             read -rp "Tekan Enter untuk kembali..."
             ;;
         0)

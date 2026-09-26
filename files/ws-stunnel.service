@@ -6,6 +6,7 @@ Wants=dropbear.service
 [Service]
 Type=simple
 User=root
+RuntimeDirectory=satset
 ExecStart=/usr/bin/python3 /usr/local/bin/ws-stunnel
 Restart=always
 RestartSec=3

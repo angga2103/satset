@@ -6,7 +6,7 @@
 set -u
 
 LOCK_FILE="/etc/user_locks.db"
-mkdir -p /etc/ssh /etc/limit/ssh /var/run/satset
+mkdir -p /etc/ssh /etc/limit/ssh /var/run/satset /run/satset
 
 # 1. Initialize SSH_QUOTA iptables chain if not present
 if command -v iptables >/dev/null 2>&1; then
@@ -61,7 +61,22 @@ if [ -f /etc/ssh/.ssh.db ]; then
     iptables_out=$(iptables -nvx -L SSH_QUOTA 2>/dev/null || true)
 
     while read -r tag user exp pass iplimit quota rest; do
-        [[ "$tag" != "###" || -z "$user" ]] && continue
+        if [[ "$tag" == "###" ]]; then
+            : # standard format: tag user exp pass iplimit quota
+        elif [[ "$tag" == "#ssh#" ]]; then
+            # legacy format: #ssh# user pass quota iplimit exp
+            tmp_pass="$exp"
+            tmp_quota="$pass"
+            tmp_iplimit="$iplimit"
+            tmp_exp="$quota"
+            pass="$tmp_pass"
+            quota="$tmp_quota"
+            iplimit="$tmp_iplimit"
+            exp="$tmp_exp"
+        else
+            continue
+        fi
+        [ -z "$user" ] && continue
         
         uid=$(id -u "$user" 2>/dev/null || echo "")
         [[ -z "$uid" || "$uid" -lt 1000 ]] && continue

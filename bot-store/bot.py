@@ -597,6 +597,7 @@ def callback_account_detail(call):
             f"BadVPN UDP GW : <code>7100, 7200, 7300</code>\n"
             f"Paket         : <b>{paket_display}</b>\n"
             f"Limit IP      : <code>{ip_display}</code>\n"
+            f"Limit Kuota   : <code>{quota_display}</code>\n"
             f"Masa Aktif    : <b>{exp_display}</b>\n\n"
             f"🔗 <b>Payload WebSocket:</b>\n"
             f"<code>{payload}</code>"
@@ -1252,10 +1253,30 @@ def callback_admin_monitor_users(call):
     b2 = types.InlineKeyboardButton(f"🔒 Lihat Akun Terkunci / Suspen ({len(suspended_accounts)})", callback_data="admin_list_suspended")
     b3 = types.InlineKeyboardButton("📋 Lihat Semua Akun VPN", callback_data="admin_users_all_vpn")
     b4 = types.InlineKeyboardButton("🔍 Cari Akun by Username", callback_data="admin_search_user_prompt")
+    b5 = types.InlineKeyboardButton("🔄 Sinkronkan Akun VPS & Bot", callback_data="admin_sync_accounts")
     b_back = types.InlineKeyboardButton("🔙 Panel Admin", callback_data="menu_admin")
     
-    markup.add(b1, b2, b3, b4, b_back)
+    markup.add(b1, b2, b3, b4, b5, b_back)
     bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_sync_accounts")
+def callback_admin_sync_accounts(call):
+    user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
+    bot.answer_callback_query(call.id, "Sedang mensinkronkan akun...")
+    res = xray_manager.sync_all_accounts()
+    to_vps = len(res.get("to_vps", []))
+    to_db = len(res.get("to_db", []))
+    bot.send_message(
+        user_id,
+        f"✅ <b>SINKRONISASI SELESAI</b>\n\n"
+        f"• Dipulihkan ke VPS (.ssh.db/passwd) : <b>{to_vps} Akun</b>\n"
+        f"• Diimpor dari VPS ke Bot Store      : <b>{to_db} Akun</b>\n\n"
+        f"Semua database VPS dan Bot sekarang sinkron!"
+    )
+    callback_admin_monitor_users(call)
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin_users_active_login")
 def callback_admin_users_active_login(call):
@@ -1385,8 +1406,19 @@ def callback_manage_user(call):
     acc = database.get_account_by_username(uname)
 
     if not acc:
-        bot.answer_callback_query(call.id, f"Akun {uname} tidak ditemukan!", show_alert=True)
-        return
+        proto_detected = xray_manager.detect_user_protocol(uname)
+        if proto_detected:
+            acc = {
+                "vpn_username": uname,
+                "protocol": proto_detected,
+                "plan_type": "VPS-CLI",
+                "user_id": "-",
+                "exp_date": "VPS Server",
+                "status": "active"
+            }
+        else:
+            bot.answer_callback_query(call.id, f"Akun {uname} tidak ditemukan!", show_alert=True)
+            return
 
     proto = acc["protocol"]
     usage = xray_manager.get_user_usage_and_status(uname, proto)
@@ -1930,6 +1962,12 @@ def main():
     logger.info("Starting SATSET Telegram Store Bot...")
     # Initialize database
     database.init_db()
+
+    # Synchronize accounts between SQLite database and VPS files (.ssh.db, config.json)
+    try:
+        xray_manager.sync_all_accounts()
+    except Exception as e:
+        logger.error(f"Startup account sync error: {e}")
 
     # Start background worker for Pakasir auto-crediting and PAYG midnight deduction
     payg_worker.start_background_worker(bot)

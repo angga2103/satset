@@ -198,6 +198,8 @@ cat > /etc/issue.net <<'EOF'
 EOF
 grep -qx "/bin/false" /etc/shells 2>/dev/null || echo "/bin/false" >> /etc/shells
 grep -qx "/usr/sbin/nologin" /etc/shells 2>/dev/null || echo "/usr/sbin/nologin" >> /etc/shells
+mkdir -p /run/satset /etc/ssh /detail/ssh /etc/limit/ssh/ip /etc/limit/ssh
+touch /etc/ssh/.ssh.db
 systemctl enable dropbear >/dev/null 2>&1 || true
 systemctl restart dropbear >/dev/null 2>&1 || true
 

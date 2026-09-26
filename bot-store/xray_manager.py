@@ -352,7 +352,7 @@ def create_shadowsocks(username: str, days: int = 30, quota_gb: int = 0, ip_limi
         "primary_link": link_tls
     }
 
-def create_ssh(username: str, password: str = None, days: int = 30, ip_limit: int = 2) -> dict:
+def create_ssh(username: str, password: str = None, days: int = 30, quota_gb: int = 0, ip_limit: int = 2) -> dict:
     domain = get_domain()
     ip_server = domain
     if os.path.exists(IP_FILE):
@@ -383,13 +383,14 @@ def create_ssh(username: str, password: str = None, days: int = 30, ip_limit: in
     os.makedirs("/etc/ssh", exist_ok=True)
     os.makedirs("/detail/ssh", exist_ok=True)
     os.makedirs("/etc/limit/ssh/ip", exist_ok=True)
+    os.makedirs("/etc/limit/ssh", exist_ok=True)
 
     db_path = "/etc/ssh/.ssh.db"
     try:
         if os.path.exists(db_path):
             with open(db_path, "r", encoding="utf-8", errors="ignore") as f:
                 lines = f.readlines()
-            new_lines = [l for l in lines if not l.startswith(f"### {username} ")]
+            new_lines = [l for l in lines if not re.search(rf'^(?:###|#ssh#)\s+{re.escape(username)}\b', l)]
             with open(db_path, "w", encoding="utf-8") as f:
                 f.writelines(new_lines)
         with open(db_path, "a", encoding="utf-8") as f:
@@ -404,7 +405,6 @@ def create_ssh(username: str, password: str = None, days: int = 30, ip_limit: in
         pass
 
     try:
-        os.makedirs("/etc/limit/ssh", exist_ok=True)
         if quota_gb > 0:
             with open(f"/etc/ssh/{username}", "w") as f:
                 f.write(str(quota_gb * (1024 ** 3)))
@@ -428,7 +428,7 @@ def create_ssh(username: str, password: str = None, days: int = 30, ip_limit: in
         "ip_server": ip_server,
         "exp_date": exp_date,
         "exp_human": exp_human,
-        "quota_gb": 0,
+        "quota_gb": quota_gb,
         "ip_limit": ip_limit,
         "port_openssh": "22",
         "port_dropbear": "109, 143",
@@ -455,13 +455,18 @@ def delete_ssh(username: str) -> bool:
         try:
             with open(db_path, "r", encoding="utf-8", errors="ignore") as f:
                 lines = f.readlines()
-            new_lines = [l for l in lines if not l.startswith(f"### {username} ")]
+            new_lines = [l for l in lines if not re.search(rf'^(?:###|#ssh#)\s+{re.escape(username)}\b', l)]
             with open(db_path, "w", encoding="utf-8") as f:
                 f.writelines(new_lines)
         except Exception:
             pass
 
-    for fpath in [f"/detail/ssh/{username}.txt", f"/etc/limit/ssh/ip/{username}"]:
+    for fpath in [
+        f"/detail/ssh/{username}.txt",
+        f"/etc/limit/ssh/ip/{username}",
+        f"/etc/ssh/{username}",
+        f"/etc/limit/ssh/{username}"
+    ]:
         if os.path.exists(fpath):
             try:
                 os.remove(fpath)
@@ -486,7 +491,7 @@ def create_account(protocol: str, username: str, days: int = 30, quota_gb: int =
     elif protocol in ["shadowsocks", "ss"]:
         return create_shadowsocks(username, days, quota_gb, ip_limit)
     elif protocol in ["ssh", "openssh", "dropbear"]:
-        return create_ssh(username, days=days, ip_limit=ip_limit)
+        return create_ssh(username, days=days, quota_gb=quota_gb, ip_limit=ip_limit)
     else:
         raise ValueError(f"Protokol tidak didukung: {protocol}")
 
@@ -559,8 +564,6 @@ def is_ignored_ip(ip: str) -> bool:
             return True
         if p0 == 188 and p1 == 114:
             return True
-        if p0 == 197 and p1 == 234:
-            return True
         if p0 == 190 and p1 == 93:
             return True
         if p0 == 103 and p1 in [21, 22, 31]:
@@ -569,9 +572,93 @@ def is_ignored_ip(ip: str) -> bool:
         pass
     return False
 
+SYSTEM_USERS = {
+    "root", "daemon", "bin", "sys", "sync", "games", "man", "lp", "mail", "news",
+    "uucp", "proxy", "www-data", "backup", "list", "irc", "gnats", "nobody",
+    "systemd-network", "systemd-resolve", "messagebus", "sshd", "dropbear", "_apt"
+}
+
+def detect_user_protocol(username: str) -> str:
+    """Detect protocol for username by inspecting server files and databases.
+    Returns: 'vless', 'vmess', 'trojan', 'shadowsocks', 'ssh', or None
+    """
+    if not username or username in SYSTEM_USERS or username.startswith("systemd-"):
+        return None
+
+    # 1. Check database first
+    try:
+        acc = database.get_account_by_username(username)
+        if acc and acc.get("protocol"):
+            return acc["protocol"].lower()
+    except Exception:
+        pass
+
+    # 2. Check SSH database
+    db_ssh = "/etc/ssh/.ssh.db"
+    if os.path.exists(db_ssh):
+        try:
+            with open(db_ssh, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if re.search(rf'^(?:###|#ssh#)\s+{re.escape(username)}\b', line):
+                        return "ssh"
+        except Exception:
+            pass
+
+    # 3. Check Xray config.json tags
+    cfg_xray = "/etc/xray/config.json"
+    if os.path.exists(cfg_xray):
+        try:
+            with open(cfg_xray, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+                if re.search(rf'#&\s+{re.escape(username)}\b', content):
+                    return "vless"
+                if re.search(rf'###\s+{re.escape(username)}\b', content):
+                    return "vmess"
+                if re.search(rf'#!\s+{re.escape(username)}\b', content):
+                    return "trojan"
+                if re.search(rf'#@&\s+{re.escape(username)}\b', content):
+                    return "shadowsocks"
+        except Exception:
+            pass
+
+    # 4. Check protocol specific .db files
+    for proto, tag in [("vless", "#&"), ("vmess", "###"), ("trojan", "#!"), ("shadowsocks", "#@&"), ("ssh", "###"), ("ssh", "#ssh#")]:
+        fpath = f"/etc/{proto}/.{proto}.db"
+        if os.path.exists(fpath):
+            try:
+                with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        if re.search(rf'^{re.escape(tag)}\s+{re.escape(username)}\b', line):
+                            return proto
+            except Exception:
+                pass
+
+    return None
+
+def get_all_ssh_users() -> set:
+    users = set()
+    db_path = "/etc/ssh/.ssh.db"
+    if os.path.exists(db_path):
+        try:
+            with open(db_path, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) >= 2 and parts[0] in ["###", "#ssh#"]:
+                        users.add(parts[1])
+        except Exception:
+            pass
+    try:
+        accs = database.get_all_vpn_accounts_detailed(limit=500)
+        for a in accs:
+            if a.get("protocol") == "ssh" and a.get("vpn_username"):
+                users.add(a["vpn_username"])
+    except Exception:
+        pass
+    return users
+
 def get_active_sessions() -> dict:
-    """Scan Xray access log and SSH active logins for distinct connected IPs per user.
-    Only counts connections active within the last 90 seconds.
+    """Scan Xray access log, Dropbear, and OpenSSH active logins for distinct connected IPs per user.
+    Only counts connections active within the last 90 seconds. Excludes system users.
     Returns: {username: [ip1, ip2, ...]}
     """
     sessions = {}
@@ -611,45 +698,137 @@ def get_active_sessions() -> dict:
                 if ip_m:
                     ip = ip_m.group(1).strip()
                     
-                if user and ip and not is_ignored_ip(ip):
+                if user and ip and user not in SYSTEM_USERS and not user.startswith("systemd-") and not is_ignored_ip(ip):
                     if user not in sessions:
                         sessions[user] = set()
                     sessions[user].add(ip)
         except Exception as e:
             logger.warning(f"Error reading Xray access log: {e}")
 
-    # 2. Parse SSH sessions from 'who'
+    # 2. Parse Dropbear active sessions (including WebSocket sessions via ws-stunnel)
+    ws_session_map = {}
+    ws_file = "/run/satset/ws_sessions.json"
+    if os.path.exists(ws_file):
+        try:
+            with open(ws_file, "r") as f:
+                ws_session_map = json.load(f)
+        except Exception:
+            pass
+
+    active_dropbear_pids = set()
     try:
-        p = subprocess.run(["who"], capture_output=True, text=True, timeout=2)
+        p = subprocess.run(["ps", "-eo", "pid,comm"], capture_output=True, text=True, timeout=2)
         if p.returncode == 0:
-            for line in p.stdout.strip().split("\n"):
-                if not line:
-                    continue
-                parts = line.split()
-                if len(parts) >= 2:
-                    u = parts[0]
-                    ip_match = re.search(r'\(([0-9]{1,3}(?:\.[0-9]{1,3}){3})\)', line)
-                    if ip_match:
-                        ssh_ip = ip_match.group(1)
-                        if not is_ignored_ip(ssh_ip):
-                            if u not in sessions:
-                                sessions[u] = set()
-                            sessions[u].add(ssh_ip)
+            for line in p.stdout.splitlines():
+                parts = line.strip().split()
+                if len(parts) >= 2 and "dropbear" in parts[1]:
+                    active_dropbear_pids.add(parts[0])
     except Exception:
         pass
 
-    return {u: sorted(list(ips)) for u, ips in sessions.items()}
+    if active_dropbear_pids:
+        dropbear_logs = []
+        if os.path.exists("/var/log/auth.log") and os.path.getsize("/var/log/auth.log") > 0:
+            try:
+                with open("/var/log/auth.log", "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+                    dropbear_logs = [l for l in lines[-600:] if "Password auth succeeded" in l and "dropbear" in l]
+            except Exception:
+                pass
+        
+        if not dropbear_logs:
+            try:
+                p = subprocess.run(
+                    ["journalctl", "-u", "dropbear", "-n", "300", "--no-pager"],
+                    capture_output=True, text=True, timeout=2
+                )
+                if p.returncode == 0:
+                    dropbear_logs = [l for l in p.stdout.splitlines() if "Password auth succeeded" in l]
+            except Exception:
+                pass
+
+        for l in dropbear_logs:
+            m = re.search(r'dropbear\[(\d+)\]:\s*Password auth succeeded for \'([a-zA-Z0-9_]+)\' from ([0-9.]+):(\d+)', l)
+            if m:
+                d_pid, d_user, d_ip, d_port = m.group(1), m.group(2), m.group(3), m.group(4)
+                if d_pid in active_dropbear_pids and d_user not in SYSTEM_USERS and not d_user.startswith("systemd-"):
+                    real_ip = d_ip
+                    if d_ip == "127.0.0.1":
+                        ws_info = ws_session_map.get(d_port)
+                        if ws_info and isinstance(ws_info, dict) and "ip" in ws_info:
+                            real_ip = ws_info["ip"]
+                        else:
+                            real_ip = "127.0.0.1 (WS)"
+                    if not is_ignored_ip(real_ip):
+                        if d_user not in sessions:
+                            sessions[d_user] = set()
+                        sessions[d_user].add(real_ip)
+
+    # 3. Parse OpenSSH active sessions
+    all_ssh = get_all_ssh_users()
+    for u in all_ssh:
+        if u in SYSTEM_USERS or u.startswith("systemd-"):
+            continue
+        try:
+            p = subprocess.run(["ps", "-u", u, "-o", "pid="], capture_output=True, text=True, timeout=1)
+            if p.returncode == 0 and p.stdout.strip():
+                u_ip = "Direct SSH"
+                if os.path.exists("/var/log/auth.log") and os.path.getsize("/var/log/auth.log") > 0:
+                    try:
+                        with open("/var/log/auth.log", "r", encoding="utf-8", errors="ignore") as f:
+                            for al in reversed(f.readlines()[-400:]):
+                                if f"Accepted password for {u} from " in al:
+                                    ip_m = re.search(r'from\s+([0-9.]+)', al)
+                                    if ip_m:
+                                        u_ip = ip_m.group(1)
+                                        break
+                    except Exception:
+                        pass
+                if not is_ignored_ip(u_ip):
+                    if u not in sessions:
+                        sessions[u] = set()
+                    sessions[u].add(u_ip)
+        except Exception:
+            pass
+
+    # 4. Filter sessions: ONLY include verified VPN users with detected protocol
+    cleaned_sessions = {}
+    for u, ips in sessions.items():
+        if u in SYSTEM_USERS or u.startswith("systemd-"):
+            continue
+        proto = detect_user_protocol(u)
+        if proto:
+            cleaned_sessions[u] = sorted(list(ips))
+
+    return cleaned_sessions
 
 def get_user_usage_and_status(username: str, protocol: str = None) -> dict:
     """Retrieve detailed usage and status of a user (quota, limit IP, active IPs, suspension)"""
     if not protocol:
-        acc = database.get_account_by_username(username)
-        if acc:
-            protocol = acc.get("protocol", "vmess").lower()
-        else:
-            protocol = "vmess"
-    else:
-        protocol = protocol.lower()
+        protocol = detect_user_protocol(username)
+
+    if not protocol:
+        return {
+            "username": username,
+            "protocol": "unknown",
+            "used_bytes": 0,
+            "used_human": "0 B",
+            "quota_bytes": 0,
+            "quota_human": "Unlimited",
+            "quota_gb": 0,
+            "percent": 0.0,
+            "progress_bar": "░" * 10,
+            "active_ips": [],
+            "active_ip_count": 0,
+            "ip_limit": 1,
+            "is_locked": False,
+            "locked_until": None,
+            "lock_reason": None,
+            "remaining_sec": 0,
+            "remaining_human": "-"
+        }
+
+    protocol = protocol.lower()
 
     # 1. Used quota from /etc/limit/{protocol}/{username}
     used_bytes = 0
@@ -690,6 +869,17 @@ def get_user_usage_and_status(username: str, protocol: str = None) -> dict:
         acc = database.get_account_by_username(username)
         if acc and acc.get("quota_gb"):
             quota_bytes = int(acc["quota_gb"]) * (1024 ** 3)
+        elif protocol == "ssh" and os.path.exists("/etc/ssh/.ssh.db"):
+            try:
+                with open("/etc/ssh/.ssh.db", "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        parts = line.strip().split()
+                        if len(parts) >= 6 and parts[0] in ["###", "#ssh#"] and parts[1] == username:
+                            if parts[5].isdigit():
+                                quota_bytes = int(parts[5]) * (1024 ** 3)
+                            break
+            except Exception:
+                pass
 
     # 4. IP limit
     ip_limit = 1
@@ -706,6 +896,17 @@ def get_user_usage_and_status(username: str, protocol: str = None) -> dict:
         acc = database.get_account_by_username(username)
         if acc and acc.get("ip_limit"):
             ip_limit = int(acc["ip_limit"])
+        elif protocol == "ssh" and os.path.exists("/etc/ssh/.ssh.db"):
+            try:
+                with open("/etc/ssh/.ssh.db", "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        parts = line.strip().split()
+                        if len(parts) >= 5 and parts[0] in ["###", "#ssh#"] and parts[1] == username:
+                            if parts[4].isdigit():
+                                ip_limit = int(parts[4])
+                            break
+            except Exception:
+                pass
         else:
             cfg = load_config()
             ip_limit = cfg.get("DEFAULT_IP_LIMIT", 1)
@@ -773,6 +974,124 @@ def get_user_usage_and_status(username: str, protocol: str = None) -> dict:
         "remaining_sec": remaining_sec,
         "remaining_human": f"{remaining_sec // 60}m {remaining_sec % 60}s" if remaining_sec > 0 else "Selesai"
     }
+
+def sync_all_accounts() -> dict:
+    """Bi-directional sync between VPS system/config files and Bot Store SQLite database.
+    1. Ensures all SQLite accounts (especially SSH accounts like teslasi, teslimitkuota)
+       are present in /etc/ssh/.ssh.db, system passwd, and quota files.
+    2. Discovers VPS CLI accounts in .ssh.db and config.json and registers them to SQLite (user_id=0).
+    """
+    synced_to_vps = []
+    synced_to_db = []
+
+    # 1. Sync SQLite -> VPS
+    try:
+        db_accounts = database.get_all_vpn_accounts_detailed(limit=1000)
+        existing_ssh_db = set()
+        db_path = "/etc/ssh/.ssh.db"
+        if os.path.exists(db_path):
+            with open(db_path, "r", encoding="utf-8", errors="ignore") as f:
+                for l in f:
+                    parts = l.strip().split()
+                    if len(parts) >= 2 and parts[0] in ["###", "#ssh#"]:
+                        existing_ssh_db.add(parts[1])
+
+        for acc in db_accounts:
+            proto = acc.get("protocol", "").lower()
+            uname = acc.get("vpn_username")
+            if not uname or uname in SYSTEM_USERS or uname.startswith("systemd-"):
+                continue
+
+            if proto in ["ssh", "openssh", "dropbear"]:
+                if uname not in existing_ssh_db:
+                    pwd = acc.get("uuid") or "sat12345"
+                    exp_date = acc.get("exp_date") or (datetime.datetime.now() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+                    if exp_date == "PAYG":
+                        exp_date = (datetime.datetime.now() + datetime.timedelta(days=3650)).strftime("%Y-%m-%d")
+                    ip_l = acc.get("ip_limit") or 1
+                    q_gb = acc.get("quota_gb") or 0
+
+                    if os.path.exists("/usr/sbin/useradd") or os.path.exists("/sbin/useradd"):
+                        try:
+                            subprocess.run(["useradd", "-e", exp_date, "-s", "/bin/false", "-M", uname],
+                                           check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            p = subprocess.Popen(["chpasswd"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            p.communicate(input=f"{uname}:{pwd}".encode())
+                        except Exception as e:
+                            logger.error(f"Sync useradd error for {uname}: {e}")
+
+                    os.makedirs("/etc/ssh", exist_ok=True)
+                    os.makedirs("/etc/limit/ssh/ip", exist_ok=True)
+                    os.makedirs("/etc/limit/ssh", exist_ok=True)
+
+                    with open(db_path, "a", encoding="utf-8") as f:
+                        f.write(f"### {uname} {exp_date} {pwd} {ip_l} {q_gb}\n")
+
+                    with open(f"/etc/limit/ssh/ip/{uname}", "w") as f:
+                        f.write(str(ip_l))
+
+                    if q_gb > 0:
+                        with open(f"/etc/ssh/{uname}", "w") as f:
+                            f.write(str(q_gb * (1024 ** 3)))
+                    else:
+                        with open(f"/etc/ssh/{uname}", "w") as f:
+                            f.write("0")
+
+                    if not os.path.exists(f"/etc/limit/ssh/{uname}"):
+                        with open(f"/etc/limit/ssh/{uname}", "w") as f:
+                            f.write("0")
+
+                    synced_to_vps.append(uname)
+                    existing_ssh_db.add(uname)
+    except Exception as e:
+        logger.error(f"Sync SQLite -> VPS failed: {e}")
+
+    # 2. Sync VPS -> SQLite
+    try:
+        known_db_users = {a["vpn_username"] for a in database.get_all_vpn_accounts_detailed(limit=1000) if a.get("vpn_username")}
+        
+        # Scan /etc/ssh/.ssh.db
+        db_path = "/etc/ssh/.ssh.db"
+        if os.path.exists(db_path):
+            with open(db_path, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) >= 3 and parts[0] in ["###", "#ssh#"]:
+                        uname = parts[1]
+                        if uname in SYSTEM_USERS or uname.startswith("systemd-") or uname in known_db_users:
+                            continue
+                        exp_date = parts[2]
+                        pwd = parts[3] if len(parts) >= 4 else "sat12345"
+                        ip_l = int(parts[4]) if len(parts) >= 5 and parts[4].isdigit() else 1
+                        q_gb = int(parts[5]) if len(parts) >= 6 and parts[5].isdigit() else 0
+                        domain = get_domain()
+                        ssh_link = f"ssh://{uname}:{pwd}@{domain}:443"
+                        database.add_vpn_account(0, "ssh", uname, pwd, "vps-cli", exp_date, ssh_link, quota_gb=q_gb, ip_limit=ip_l, price_paid=0)
+                        synced_to_db.append(uname)
+                        known_db_users.add(uname)
+
+        # Scan /etc/xray/config.json
+        cfg_path = "/etc/xray/config.json"
+        if os.path.exists(cfg_path):
+            with open(cfg_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+                tags = [("#&", "vless"), ("###", "vmess"), ("#!", "trojan"), ("#@&", "shadowsocks")]
+                for tag, proto in tags:
+                    matches = re.findall(rf'{re.escape(tag)}\s+([a-zA-Z0-9_]+)\s+([0-9-]+)', content)
+                    for uname, exp_date in matches:
+                        if uname in SYSTEM_USERS or uname.startswith("systemd-") or uname in known_db_users:
+                            continue
+                        uuid_m = re.search(rf'"(?:id|password)":\s*"([^"]+)".*?"email":\s*"{re.escape(uname)}"', content)
+                        user_uuid = uuid_m.group(1) if uuid_m else str(uuid_pkg.uuid4())
+                        database.add_vpn_account(0, proto, uname, user_uuid, "vps-cli", exp_date, f"{proto}://{user_uuid}", quota_gb=350, ip_limit=1, price_paid=0)
+                        synced_to_db.append(uname)
+                        known_db_users.add(uname)
+
+    except Exception as e:
+        logger.error(f"Sync VPS -> SQLite failed: {e}")
+
+    logger.info(f"Sync completed. Restored to VPS: {synced_to_vps}, Imported to DB: {synced_to_db}")
+    return {"to_vps": synced_to_vps, "to_db": synced_to_db}
 
 def suspend_account(protocol: str, username: str, duration_minutes: int = 10, reason: str = "multi_login") -> str:
     """Safely suspend user account for specified duration without corrupting config files"""

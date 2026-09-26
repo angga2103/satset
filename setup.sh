@@ -414,7 +414,7 @@ EOF
     systemctl enable dropbear >/dev/null 2>&1 || true
     systemctl restart dropbear >/dev/null 2>&1 || true
 
-    mkdir -p /etc/ssh /detail/ssh /etc/limit/ssh/ip
+    mkdir -p /etc/ssh /detail/ssh /etc/limit/ssh/ip /etc/limit/ssh /run/satset
     touch /etc/ssh/.ssh.db
 
     wget -q -O /usr/local/bin/ws-stunnel "${REPO}files/ws-stunnel.py" || true
@@ -555,7 +555,7 @@ EOF
 
   wget -q -O /usr/local/sbin/limit-ssh "${REPO}files/limit-ssh.sh" >/dev/null 2>&1 || true
   chmod +x /usr/local/sbin/limit-ssh 2>/dev/null || true
-  mkdir -p /etc/satset
+  mkdir -p /etc/satset /run/satset
   cp -f /usr/local/sbin/limit-ssh /etc/satset/limit-ssh.sh 2>/dev/null || true
   echo "*/1 * * * * root /usr/local/sbin/limit-ssh" > /etc/cron.d/limit-ssh 2>/dev/null || true
 
