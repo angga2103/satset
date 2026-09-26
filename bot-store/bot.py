@@ -35,6 +35,7 @@ bot = telebot.TeleBot(BOT_TOKEN or "DUMMY_TOKEN", parse_mode="HTML")
 # User state storage for multi-step prompts (e.g. entering username, custom amount, broadcast)
 user_states = {}
 trial_locks = set()
+renew_locks = set()
 
 # Helper keyboards
 def main_menu_keyboard(user_id: int):
@@ -616,10 +617,223 @@ def callback_account_detail(call):
         )
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
+        types.InlineKeyboardButton("🔄 Perpanjang Masa Aktif Akun", callback_data=f"renew_acc_{acc_id}"),
         types.InlineKeyboardButton("❌ Batalkan & Hapus Akun (Refund Saldo)", callback_data=f"cancel_acc_{acc_id}"),
         types.InlineKeyboardButton("🔙 Kembali ke Daftar Akun", callback_data="menu_my_accounts")
     )
     bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("renew_acc_"))
+def callback_renew_account(call):
+    user_id = call.from_user.id
+    acc_id = int(call.data.replace("renew_acc_", ""))
+    acc = database.get_vpn_account_by_id(acc_id)
+
+    if not acc or acc["user_id"] != user_id:
+        bot.answer_callback_query(call.id, "Akun tidak ditemukan atau bukan milik Anda.", show_alert=True)
+        return
+
+    proto = acc["protocol"].upper()
+    uname = acc["vpn_username"]
+    plan_type = str(acc.get("plan_type", "monthly")).lower()
+    raw_exp = str(acc.get("exp_date", "")).strip()
+    bal = database.get_balance(user_id)
+    cfg = load_config()
+    price_monthly = cfg.get("PRICE_MONTHLY", 8000)
+
+    if plan_type == "payg" or raw_exp.upper() == "PAYG":
+        daily_price = cfg.get("PRICE_PAYG_DAILY", 300)
+        text = (
+            f"⚡ <b>AKUN PAY-AS-YOU-GO (PAYG)</b>\n\n"
+            f"• <b>Username:</b> <code>{uname}</code>\n"
+            f"• <b>Protokol:</b> <code>{proto}</code>\n"
+            f"• <b>Tarif Harian:</b> <b>Rp {daily_price:,} / hari</b>\n"
+            f"• <b>Saldo Anda:</b> <b>Rp {bal:,}</b>\n\n"
+            f"💡 <i>Akun PAYG menggunakan sistem potong saldo harian otomatis. Akun akan selalu aktif setiap hari selama saldo bot Anda mencukupi tanpa perlu perpanjangan manual.</i>\n\n"
+            f"Pastikan saldo bot Anda selalu terisi agar layanan tidak terputus."
+        )
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("💳 Isi Saldo (Top Up)", callback_data="menu_topup"),
+            types.InlineKeyboardButton("🔙 Kembali ke Detail Akun", callback_data=f"detail_acc_{acc_id}")
+        )
+        bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+        return
+
+    today = datetime.date.today()
+    is_expired = False
+    remaining_days = 0
+    exp_formatted = raw_exp
+    try:
+        exp_date_obj = datetime.datetime.strptime(raw_exp[:10], "%Y-%m-%d").date()
+        diff = (exp_date_obj - today).days
+        remaining_days = diff
+        exp_formatted = exp_date_obj.strftime("%d %b, %Y")
+        if diff < 0:
+            is_expired = True
+    except Exception:
+        is_expired = True
+
+    price_30 = price_monthly
+    price_60 = price_monthly * 2
+    price_90 = price_monthly * 3
+
+    text = (
+        f"🔄 <b>PERPANJANG MASA AKTIF AKUN VPN</b>\n\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Username:</b> <code>{uname}</code>\n"
+        f"• <b>Protokol:</b> <code>{proto}</code>\n"
+    )
+
+    if plan_type == "trial":
+        text += (
+            f"• <b>Status Paket:</b> <b>TRIAL (Uji Coba 1 Hari)</b>\n"
+            f"• <b>Masa Aktif Saat Ini:</b> <code>{raw_exp}</code>\n"
+            f"• <b>Saldo Anda:</b> <b>Rp {bal:,}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"✨ <i>Memperpanjang akun trial akan otomatis meng-upgrade akun Anda menjadi paket reguler bulanan. Akun tetap menggunakan username & konfigurasi yang sama tanpa perlu setting ulang!</i>\n\n"
+        )
+    elif is_expired:
+        text += (
+            f"• <b>Status:</b> 🔴 <b>Sudah Expired ({exp_formatted})</b>\n"
+            f"• <b>Saldo Anda:</b> <b>Rp {bal:,}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"✨ <i>Akun Anda akan langsung diaktifkan kembali mulai hari ini dengan username & konfigurasi yang sama!</i>\n\n"
+        )
+    else:
+        text += (
+            f"• <b>Status:</b> 🟢 <b>Aktif (Sisa {remaining_days} hari)</b>\n"
+            f"• <b>Masa Aktif S/D:</b> <b>{exp_formatted}</b>\n"
+            f"• <b>Saldo Anda:</b> <b>Rp {bal:,}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"✨ <i>Masa aktif baru akan otomatis ditambahkan ke sisa hari yang masih ada!</i>\n\n"
+        )
+
+    text += "Pilih paket durasi perpanjangan yang Anda inginkan:"
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton(f"📅 30 Hari — Rp {price_30:,}", callback_data=f"confirm_renew_{acc_id}_30"),
+        types.InlineKeyboardButton(f"📅 60 Hari — Rp {price_60:,}", callback_data=f"confirm_renew_{acc_id}_60"),
+        types.InlineKeyboardButton(f"📅 90 Hari — Rp {price_90:,}", callback_data=f"confirm_renew_{acc_id}_90"),
+        types.InlineKeyboardButton("🔙 Batal & Kembali ke Detail", callback_data=f"detail_acc_{acc_id}")
+    )
+    bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("confirm_renew_"))
+def callback_confirm_renew(call):
+    user_id = call.from_user.id
+    if user_id in renew_locks:
+        bot.answer_callback_query(call.id, "Sedang memproses perpanjangan...", show_alert=False)
+        return
+
+    parts = call.data.replace("confirm_renew_", "").split("_")
+    if len(parts) != 2:
+        bot.answer_callback_query(call.id, "Data perpanjangan tidak valid.", show_alert=True)
+        return
+
+    acc_id = int(parts[0])
+    days = int(parts[1])
+
+    acc = database.get_vpn_account_by_id(acc_id)
+    if not acc or acc["user_id"] != user_id:
+        bot.answer_callback_query(call.id, "Akun tidak ditemukan atau bukan milik Anda.", show_alert=True)
+        return
+
+    cfg = load_config()
+    price_monthly = cfg.get("PRICE_MONTHLY", 8000)
+
+    if days == 30:
+        cost = price_monthly
+    elif days == 60:
+        cost = price_monthly * 2
+    elif days == 90:
+        cost = price_monthly * 3
+    else:
+        cost = int(round((days / 30.0) * price_monthly))
+
+    bal = database.get_balance(user_id)
+    if bal < cost:
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("💳 Isi Saldo (Top Up)", callback_data="menu_topup"),
+            types.InlineKeyboardButton("🔙 Kembali ke Detail Akun", callback_data=f"detail_acc_{acc_id}")
+        )
+        text = (
+            f"❌ <b>Saldo Anda Tidak Mencukupi!</b>\n\n"
+            f"• Biaya Perpanjang ({days} Hari): <b>Rp {cost:,}</b>\n"
+            f"• Saldo Anda Saat Ini: <b>Rp {bal:,}</b>\n"
+            f"• Kekurangan Saldo: <b>Rp {cost - bal:,}</b>\n\n"
+            f"Silakan lakukan Top Up saldo terlebih dahulu untuk melanjutkan perpanjangan."
+        )
+        bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+        return
+
+    renew_locks.add(user_id)
+    proto = acc["protocol"].lower()
+    uname = acc["vpn_username"]
+    uuid_val = acc.get("uuid")
+    plan_type = str(acc.get("plan_type", "monthly")).lower()
+    raw_exp = str(acc.get("exp_date", "")).strip()
+
+    try:
+        deducted = database.deduct_balance(user_id, cost)
+        if not deducted:
+            bot.answer_callback_query(call.id, "Gagal memotong saldo. Saldo tidak mencukupi.", show_alert=True)
+            return
+
+        today = datetime.date.today()
+        base_date = today
+        try:
+            curr_exp_date = datetime.datetime.strptime(raw_exp[:10], "%Y-%m-%d").date()
+            if curr_exp_date >= today and plan_type != "trial":
+                base_date = curr_exp_date
+        except Exception:
+            base_date = today
+
+        new_exp_obj = base_date + datetime.timedelta(days=days)
+        new_exp_str = new_exp_obj.strftime("%Y-%m-%d")
+        new_exp_human = new_exp_obj.strftime("%d %b, %Y")
+
+        try:
+            xray_manager.renew_account(proto, uname, new_exp_str, user_uuid=uuid_val)
+        except Exception as e:
+            logger.error(f"Error renewing {uname} on server: {e}")
+
+        new_plan = "monthly" if plan_type == "trial" else None
+        database.renew_vpn_account_db(acc_id, new_exp_str, additional_price=cost, new_plan_type=new_plan)
+        database.record_purchase_transaction(user_id, cost, f"Perpanjang VPN {uname} ({days} hari)")
+
+        new_bal = database.get_balance(user_id)
+        bot.answer_callback_query(call.id, f"Akun {uname} berhasil diperpanjang!")
+
+        success_text = (
+            f"🎉 <b>PERPANJANG AKUN BERHASIL!</b>\n\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Username:</b> <code>{uname}</code>\n"
+            f"• <b>Protokol:</b> <code>{proto.upper()}</code>\n"
+            f"• <b>Tambahan Masa Aktif:</b> <b>+{days} Hari</b>\n"
+            f"• <b>Masa Aktif Baru:</b> <b>{new_exp_human}</b> (<code>{new_exp_str}</code>)\n"
+            f"• <b>Biaya:</b> <b>Rp {cost:,}</b>\n"
+            f"• <b>Sisa Saldo Anda:</b> <b>Rp {new_bal:,}</b>\n"
+            f"• <b>Status Akun:</b> 🟢 <b>Aktif</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Akun Anda langsung aktif dan dapat langsung digunakan dengan konfigurasi yang sama!"
+        )
+
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("📱 Lihat Detail Akun", callback_data=f"detail_acc_{acc_id}"),
+            types.InlineKeyboardButton("📋 Daftar Akun Saya", callback_data="menu_my_accounts"),
+            types.InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")
+        )
+        bot.edit_message_text(success_text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+    except Exception as e:
+        logger.error(f"Failed to process renew for user {user_id}, acc {acc_id}: {e}")
+        bot.send_message(user_id, f"Terjadi kesalahan saat memperpanjang akun: {e}")
+    finally:
+        renew_locks.discard(user_id)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cancel_acc_"))
 def callback_cancel_account(call):

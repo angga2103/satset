@@ -436,6 +436,39 @@ def delete_vpn_account_by_username(vpn_username: str):
     conn.commit()
     conn.close()
 
+def renew_vpn_account_db(acc_id: int, new_exp_date: str, additional_price: int = 0, new_plan_type: str = None):
+    conn = get_connection()
+    c = conn.cursor()
+    if new_plan_type:
+        c.execute("""
+            UPDATE vpn_accounts 
+            SET exp_date = ?, status = 'active', locked_until = NULL, lock_reason = NULL,
+                plan_type = ?, price_paid = COALESCE(price_paid, 0) + ?
+            WHERE id = ?
+        """, (new_exp_date, new_plan_type, additional_price, acc_id))
+    else:
+        c.execute("""
+            UPDATE vpn_accounts 
+            SET exp_date = ?, status = 'active', locked_until = NULL, lock_reason = NULL,
+                price_paid = COALESCE(price_paid, 0) + ?
+            WHERE id = ?
+        """, (new_exp_date, additional_price, acc_id))
+    conn.commit()
+    conn.close()
+
+def record_purchase_transaction(user_id: int, amount: int, description: str = "renew_account"):
+    conn = get_connection()
+    c = conn.cursor()
+    order_id = f"RENEW-{int(datetime.datetime.now().timestamp())}-{user_id}"
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute("""
+    INSERT INTO transactions (order_id, user_id, amount, payment_method, status, created_at, completed_at)
+    VALUES (?, ?, ?, ?, 'completed', ?, ?)
+    """, (order_id, user_id, amount, description, now, now))
+    conn.commit()
+    conn.close()
+    return order_id
+
 # Initialize tables when imported
 init_db()
 

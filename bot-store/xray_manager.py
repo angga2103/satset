@@ -864,3 +864,206 @@ def set_user_ip_limit(protocol: str, username: str, ip_limit: int) -> bool:
     database.update_account_rules(username, ip_limit=ip_limit)
     return True
 
+def renew_xray_config(protocol: str, username: str, new_exp_date: str, user_uuid: str = None) -> bool:
+    """Update expiration date in /etc/xray/config.json, or re-inject if account was expired/removed"""
+    protocol = protocol.lower()
+    if not os.path.exists(CONFIG_FILE):
+        return True
+
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        prefix_map = {
+            "vmess": "###",
+            "vless": "#&",
+            "trojan": "#!",
+            "shadowsocks": "#@&",
+            "ss": "#@&"
+        }
+        prefix = prefix_map.get(protocol, "###")
+        pat = rf'({re.escape(prefix)}\s+{re.escape(username)}\s+)[0-9\-]+'
+
+        if re.search(pat, content):
+            new_content = re.sub(pat, rf'\g<1>{new_exp_date}', content)
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                f.write(new_content)
+            return True
+        else:
+            if not user_uuid:
+                acc = database.get_account_by_username(username)
+                if acc:
+                    user_uuid = acc.get("uuid")
+
+            if user_uuid:
+                if protocol == "vmess":
+                    entry1 = f'### {username} {new_exp_date}'
+                    entry2 = f'}},{{"id": "{user_uuid}","alterId": 0,"email": "{username}"'
+                    inject_xray_config("#vmess", [entry1, entry2])
+                    inject_xray_config("#vmessgrpc", [entry1, entry2])
+                elif protocol == "vless":
+                    entry1 = f'#& {username} {new_exp_date}'
+                    entry2 = f'}},{{"id": "{user_uuid}","email": "{username}"'
+                    inject_xray_config("#vless", [entry1, entry2])
+                    inject_xray_config("#vlessgrpc", [entry1, entry2])
+                elif protocol == "trojan":
+                    entry1 = f'#! {username} {new_exp_date}'
+                    entry2 = f'}},{{"password": "{user_uuid}","email": "{username}"'
+                    inject_xray_config("#trojanws", [entry1, entry2])
+                    inject_xray_config("#trojangrpc", [entry1, entry2])
+                elif protocol in ["shadowsocks", "ss"]:
+                    cipher = "aes-128-gcm"
+                    entry1 = f'#@& {username} {new_exp_date}'
+                    entry2 = f'}},{{"password": "{user_uuid}","method": "{cipher}","email": "{username}"'
+                    inject_xray_config("#ssws", [entry1, entry2])
+                    inject_xray_config("#ssgrpc", [entry1, entry2])
+                return True
+            else:
+                logger.warning(f"Could not re-inject Xray config for {username}: UUID not found")
+                return False
+    except Exception as e:
+        logger.error(f"Failed to update xray config for {username}: {e}")
+        return False
+
+def update_protocol_db_file(protocol: str, username: str, new_exp_date: str, user_uuid: str = None, quota_gb: int = 0, ip_limit: int = 1):
+    """Update or append expiration date in /etc/{protocol}/.{protocol}.db"""
+    protocol = protocol.lower()
+    if protocol in ["shadowsocks", "ss"]:
+        proto_dir = "shadowsocks"
+        prefix = "#@&"
+    else:
+        proto_dir = protocol
+        prefix = "###" if protocol == "vmess" else ("#&" if protocol == "vless" else "#!")
+
+    db_file = f"/etc/{proto_dir}/.{proto_dir}.db"
+    if not os.path.exists(db_file):
+        try:
+            os.makedirs(os.path.dirname(db_file), exist_ok=True)
+            with open(db_file, "w", encoding="utf-8") as f:
+                pass
+        except Exception:
+            return
+
+    try:
+        with open(db_file, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+
+        updated = False
+        new_lines = []
+        for line in lines:
+            parts = line.strip().split()
+            if len(parts) >= 2 and parts[0] == prefix and parts[1] == username:
+                if protocol == "vmess":
+                    uuid_val = parts[3] if len(parts) > 3 else (user_uuid or "")
+                    new_lines.append(f"### {username} {new_exp_date} {uuid_val} \n")
+                else:
+                    uuid_val = parts[3] if len(parts) > 3 else (user_uuid or "")
+                    q_val = parts[4] if len(parts) > 4 else str(quota_gb)
+                    ip_val = parts[5] if len(parts) > 5 else str(ip_limit)
+                    new_lines.append(f"{prefix} {username} {new_exp_date} {uuid_val} {q_val} {ip_val}\n")
+                updated = True
+            else:
+                new_lines.append(line)
+
+        if not updated and user_uuid:
+            if protocol == "vmess":
+                new_lines.append(f"### {username} {new_exp_date} {user_uuid} \n")
+            else:
+                new_lines.append(f"{prefix} {username} {new_exp_date} {user_uuid} {quota_gb} {ip_limit}\n")
+
+        with open(db_file, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+    except Exception as e:
+        logger.error(f"Failed to update db file {db_file}: {e}")
+
+def renew_ssh(username: str, new_exp_date: str) -> bool:
+    """Extend SSH user expiration date on system and unlock if locked"""
+    if os.path.exists("/usr/sbin/usermod") or os.path.exists("/sbin/usermod"):
+        try:
+            subprocess.run(["usermod", "-e", new_exp_date, username], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["usermod", "-U", username], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            logger.error(f"Failed to usermod for {username}: {e}")
+
+    db_path = "/etc/ssh/.ssh.db"
+    if os.path.exists(db_path):
+        try:
+            with open(db_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+            new_lines = []
+            updated = False
+            for line in lines:
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[0] == "###" and parts[1] == username:
+                    pwd = parts[3] if len(parts) > 3 else ""
+                    ip_limit = parts[4] if len(parts) > 4 else "1"
+                    new_lines.append(f"### {username} {new_exp_date} {pwd} {ip_limit}\n")
+                    updated = True
+                else:
+                    new_lines.append(line)
+            if not updated:
+                acc = database.get_account_by_username(username)
+                pwd = acc.get("uuid", "") if acc else ""
+                ip_limit = str(acc.get("ip_limit", 1)) if acc else "1"
+                new_lines.append(f"### {username} {new_exp_date} {pwd} {ip_limit}\n")
+            with open(db_path, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+        except Exception as e:
+            logger.error(f"Failed to update {db_path}: {e}")
+    return True
+
+def renew_account(protocol: str, username: str, new_exp_date: str, user_uuid: str = None) -> bool:
+    """Renew VPN/SSH account by extending its expiration date and restoring service if suspended."""
+    protocol = protocol.lower()
+    logger.info(f"Renewing {protocol} user '{username}' to exp_date {new_exp_date}")
+
+    if protocol in ["ssh", "openssh", "dropbear"]:
+        renew_ssh(username, new_exp_date)
+    else:
+        acc = database.get_account_by_username(username)
+        if not user_uuid and acc:
+            user_uuid = acc.get("uuid")
+        quota_gb = acc.get("quota_gb", 0) if acc else 0
+        ip_limit = acc.get("ip_limit", 1) if acc else 1
+
+        renew_xray_config(protocol, username, new_exp_date, user_uuid=user_uuid)
+        update_protocol_db_file(protocol, username, new_exp_date, user_uuid=user_uuid, quota_gb=quota_gb, ip_limit=ip_limit)
+
+        if quota_gb > 0:
+            quota_bytes = quota_gb * 1024 * 1024 * 1024
+            quota_file = f"/etc/{protocol}/{username}"
+            try:
+                os.makedirs(os.path.dirname(quota_file), exist_ok=True)
+                with open(quota_file, "w") as f:
+                    f.write(str(quota_bytes))
+            except Exception:
+                pass
+
+        if ip_limit > 0:
+            ip_file = f"/etc/limit/{protocol}/ip/{username}"
+            try:
+                os.makedirs(os.path.dirname(ip_file), exist_ok=True)
+                with open(ip_file, "w") as f:
+                    f.write(str(ip_limit))
+            except Exception:
+                pass
+
+        reset_user_quota(protocol, username)
+        restart_xray()
+
+    # Clear suspension lock from database and file if any
+    database.unlock_account_db(username)
+    lock_file = "/etc/user_locks.db"
+    if os.path.exists(lock_file):
+        try:
+            with open(lock_file, "r") as f:
+                lines = [l.strip() for l in f if l.strip() and not l.startswith(f"{protocol}:{username}:")]
+            with open(lock_file, "w") as f:
+                for l in lines:
+                    f.write(l + "\n")
+        except Exception:
+            pass
+
+    return True
+
+
