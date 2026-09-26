@@ -108,6 +108,14 @@ cp -f /usr/local/sbin/tune-network /etc/satset/tune-network.sh 2>/dev/null || tr
 ln -sf /usr/local/sbin/tune-network /usr/local/sbin/bbr 2>/dev/null || true
 /usr/local/sbin/tune-network apply >/dev/null 2>&1 || true
 
+# Pasang SSH Quota & Traffic Accounting
+echo -e "${y}• Memasang modul limit kuota SSH (limit-ssh)...${NC}"
+wget -q -O /usr/local/sbin/limit-ssh "${REPO}/files/limit-ssh.sh${CACHE_BUSTER}" 2>/dev/null || \
+curl -fsSL -o /usr/local/sbin/limit-ssh "${REPO}/files/limit-ssh.sh${CACHE_BUSTER}" 2>/dev/null || true
+chmod +x /usr/local/sbin/limit-ssh 2>/dev/null || true
+cp -f /usr/local/sbin/limit-ssh /etc/satset/limit-ssh.sh 2>/dev/null || true
+echo "*/1 * * * * root /usr/local/sbin/limit-ssh" > /etc/cron.d/limit-ssh 2>/dev/null || true
+
 # Pasang & Aktifkan BadVPN UDPGW Multi-Port (7100, 7200, 7300)
 echo -e "${y}• Memasang & mengaktifkan BadVPN UDPGW (Gaming 7100, 7200, 7300)...${NC}"
 wget -q -O /tmp/install-badvpn.sh "${REPO}/files/install-badvpn.sh${CACHE_BUSTER}" 2>/dev/null || \

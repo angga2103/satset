@@ -6,5 +6,6 @@ elif [ -f /etc/satset/tune-network.sh ]; then
     /etc/satset/tune-network.sh "${1:-status}"
 else
     echo "Modul tune-network belum terpasang. Jalankan 'update' terlebih dahulu."
+    echo -ne "\033[1;36mTekan tombol apa saja untuk kembali ke menu...\033[0m"
+    read -n 1 -s -r
 fi
-read -rp "Tekan Enter untuk kembali ke menu..."

@@ -317,6 +317,13 @@ cp -f /usr/local/sbin/tune-network /etc/satset/tune-network.sh 2>/dev/null || tr
 ln -sf /usr/local/sbin/tune-network /usr/local/sbin/bbr 2>/dev/null || true
 /usr/local/sbin/tune-network apply >/dev/null 2>&1 || true
 
+# Pasang SSH Quota & Traffic Accounting
+wget -q -O /usr/local/sbin/limit-ssh "$REPO_RAW/files/limit-ssh.sh${CACHE_BUSTER}" 2>/dev/null || \
+curl -fsSL -o /usr/local/sbin/limit-ssh "$REPO_RAW/files/limit-ssh.sh${CACHE_BUSTER}" 2>/dev/null || true
+chmod +x /usr/local/sbin/limit-ssh 2>/dev/null || true
+cp -f /usr/local/sbin/limit-ssh /etc/satset/limit-ssh.sh 2>/dev/null || true
+echo "*/1 * * * * root /usr/local/sbin/limit-ssh" > /etc/cron.d/limit-ssh 2>/dev/null || true
+
 if systemctl is-active --quiet satset-bot 2>/dev/null; then
     systemctl restart satset-bot 2>/dev/null || true
 fi

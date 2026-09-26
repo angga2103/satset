@@ -110,29 +110,57 @@ apply_anti_ddos() {
 
 show_status() {
     clear
-    echo -e "\033[1;97m──────────────────────────────────────────\033[0m"
-    echo -e "\033[1;92m       STATUS TCP BBR & ANTI-DDOS        \033[0m"
-    echo -e "\033[1;97m──────────────────────────────────────────\033[0m"
+    echo -e "\033[1;97m─────────────────────────────────────────────────────\033[0m"
+    echo -e "\033[1;92m             STATUS TCP BBR & ANTI-DDOS              \033[0m"
+    echo -e "\033[1;97m─────────────────────────────────────────────────────\033[0m"
     echo ""
     cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "-")
     qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "-")
     bbr_avail=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || echo "-")
+    tfo=$(sysctl -n net.ipv4.tcp_fastopen 2>/dev/null || echo "0")
+    somax=$(sysctl -n net.core.somaxconn 2>/dev/null || echo "-")
     
-    echo -e "• \033[1;33mCongestion Control\033[0m  : \033[1;32m$cc\033[0m"
-    echo -e "• \033[1;33mQueue Discipline (qdisc)\033[0m: \033[1;32m$qdisc\033[0m"
-    echo -e "• \033[1;33mAvailable Algorithms\033[0m  : $bbr_avail"
-    echo ""
-    echo -e "\033[1;36mRingkasan Aturan Anti-DDoS (iptables):\033[0m"
-    if iptables -L SATSET_DDOS -n >/dev/null 2>&1; then
-        iptables -L SATSET_DDOS -n -v | head -n 12
+    if [[ "$cc" == *"bbr"* ]]; then
+        cc_status="\033[1;32m[ AKTIF ] ($cc)\033[0m"
     else
-        echo "Chain SATSET_DDOS belum aktif."
+        cc_status="\033[1;33m[ NON-BBR ] ($cc)\033[0m"
     fi
+
+    if [[ "$qdisc" == *"fq"* || "$qdisc" == *"cake"* ]]; then
+        qdisc_status="\033[1;32m[ AKTIF ] ($qdisc)\033[0m"
+    else
+        qdisc_status="\033[1;33m($qdisc)\033[0m"
+    fi
+
+    echo -e "• \033[1;33mTCP Congestion Control\033[0m : $cc_status"
+    echo -e "• \033[1;33mQueue Discipline (qdisc)\033[0m : $qdisc_status"
+    echo -e "• \033[1;33mAvailable Algorithms\033[0m   : \033[1;37m$bbr_avail\033[0m"
+    echo -e "• \033[1;33mTCP Fast Open (TFO)\033[0m     : \033[1;32mValue $tfo (Aktif Client+Server)\033[0m"
+    echo -e "• \033[1;33mMax Connection Backlog\033[0m  : \033[1;37m$somax sockets\033[0m"
     echo ""
-    echo -e "\033[1;97m──────────────────────────────────────────\033[0m"
+    echo -e "\033[1;97m─────────────────────────────────────────────────────\033[0m"
+    echo -e "\033[1;36mRingkasan Proteksi Firewall & Anti-DDoS:\033[0m"
+    if iptables -L SATSET_DDOS -n >/dev/null 2>&1; then
+        rule_count=$(iptables -S SATSET_DDOS 2>/dev/null | grep -c "^-A")
+        echo -e "• \033[1;33mStatus Chain SATSET_DDOS\033[0m: \033[1;32m[ AKTIF ] ($rule_count Aturan Filter)\033[0m"
+        echo -e "• \033[1;33mPerlindungan\033[0m            : SYN Flood, Port Scan, Ping Flood, Anti-Torrent"
+        echo -e "• \033[1;33mMax Concurrent Conn/IP\033[0m  : 1000 Koneksi (Mendukung CDN/Proxy)"
+        echo -e "• \033[1;33mEstablished Traffic\033[0m     : Zero-latency Fast-path ACCEPT"
+    else
+        echo -e "• \033[1;33mStatus Chain SATSET_DDOS\033[0m: \033[1;31m[ BELUM AKTIF ]\033[0m"
+    fi
+    echo -e "\033[1;97m─────────────────────────────────────────────────────\033[0m"
+    echo ""
+    echo -ne "\033[1;36mTekan tombol apa saja untuk kembali ke menu...\033[0m"
+    read -n 1 -s -r
 }
 
-action="${1:-apply}"
+if [[ "${0##*/}" == "bbr" ]] && [ -z "${1:-}" ]; then
+    action="status"
+else
+    action="${1:-apply}"
+fi
+
 case "$action" in
     status|bbr-status)
         show_status

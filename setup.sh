@@ -553,15 +553,21 @@ EOF
   ln -sf /usr/local/sbin/tune-network /usr/local/sbin/bbr 2>/dev/null || true
   /usr/local/sbin/tune-network apply >/dev/null 2>&1 || true
 
+  wget -q -O /usr/local/sbin/limit-ssh "${REPO}files/limit-ssh.sh" >/dev/null 2>&1 || true
+  chmod +x /usr/local/sbin/limit-ssh 2>/dev/null || true
+  mkdir -p /etc/satset
+  cp -f /usr/local/sbin/limit-ssh /etc/satset/limit-ssh.sh 2>/dev/null || true
+  echo "*/1 * * * * root /usr/local/sbin/limit-ssh" > /etc/cron.d/limit-ssh 2>/dev/null || true
+
   echo -e "${YELLOW} Mengoptimasi network interfaces...${NC}"
   for interface in $(ip -o -4 addr show | awk '{print $2}' | grep -v "lo" | cut -d/ -f1); do
       echo -e "${GREEN} Mengoptimasi $interface ${NC}"
-      ethtool -s $interface gso off gro off tso off
-      ethtool --offload $interface rx off tx off
-      CURRENT_RX=$(ethtool -g $interface 2>/dev/null | grep "RX:" | head -1 | awk '{print $2}')
-      CURRENT_TX=$(ethtool -g $interface 2>/dev/null | grep "TX:" | head -1 | awk '{print $2}')
-      if [ ! -z "$CURRENT_RX" ] && [ ! -z "$CURRENT_TX" ]; then
-          ethtool -G $interface rx $CURRENT_RX tx $CURRENT_TX
+      ethtool -s $interface gso off gro off tso off 2>/dev/null || true
+      ethtool --offload $interface rx off tx off 2>/dev/null || true
+      CURRENT_RX=$(ethtool -g $interface 2>/dev/null | grep "RX:" | head -1 | awk '{print $2}' || true)
+      CURRENT_TX=$(ethtool -g $interface 2>/dev/null | grep "TX:" | head -1 | awk '{print $2}' || true)
+      if [ -n "$CURRENT_RX" ] && [ -n "$CURRENT_TX" ]; then
+          ethtool -G $interface rx $CURRENT_RX tx $CURRENT_TX 2>/dev/null || true
       fi
   done
 

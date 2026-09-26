@@ -165,6 +165,21 @@ def handle_client(client_sock, client_addr):
         client_sock.settimeout(None)
         backend_sock.settimeout(None)
 
+        try:
+            client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            backend_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            if hasattr(socket, "TCP_KEEPIDLE"):
+                client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+                backend_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+            if hasattr(socket, "TCP_KEEPINTVL"):
+                client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+                backend_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+            if hasattr(socket, "TCP_KEEPCNT"):
+                client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 5)
+                backend_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 5)
+        except Exception:
+            pass
+
         if is_http:
             # Upgrade WebSocket handshake
             client_sock.sendall(WS_RESPONSE_101)

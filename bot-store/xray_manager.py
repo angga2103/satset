@@ -393,13 +393,26 @@ def create_ssh(username: str, password: str = None, days: int = 30, ip_limit: in
             with open(db_path, "w", encoding="utf-8") as f:
                 f.writelines(new_lines)
         with open(db_path, "a", encoding="utf-8") as f:
-            f.write(f"### {username} {exp_date} {password} {ip_limit}\n")
+            f.write(f"### {username} {exp_date} {password} {ip_limit} {quota_gb}\n")
     except Exception as e:
         logger.error(f"Failed to save to {db_path}: {e}")
 
     try:
         with open(f"/etc/limit/ssh/ip/{username}", "w") as f:
             f.write(str(ip_limit))
+    except Exception:
+        pass
+
+    try:
+        os.makedirs("/etc/limit/ssh", exist_ok=True)
+        if quota_gb > 0:
+            with open(f"/etc/ssh/{username}", "w") as f:
+                f.write(str(quota_gb * (1024 ** 3)))
+        else:
+            with open(f"/etc/ssh/{username}", "w") as f:
+                f.write("0")
+        with open(f"/etc/limit/ssh/{username}", "w") as f:
+            f.write("0")
     except Exception:
         pass
 
@@ -1047,7 +1060,8 @@ def renew_ssh(username: str, new_exp_date: str) -> bool:
                 if len(parts) >= 2 and parts[0] == "###" and parts[1] == username:
                     pwd = parts[3] if len(parts) > 3 else ""
                     ip_limit = parts[4] if len(parts) > 4 else "1"
-                    new_lines.append(f"### {username} {new_exp_date} {pwd} {ip_limit}\n")
+                    quota_val = parts[5] if len(parts) > 5 else "0"
+                    new_lines.append(f"### {username} {new_exp_date} {pwd} {ip_limit} {quota_val}\n")
                     updated = True
                 else:
                     new_lines.append(line)
@@ -1055,9 +1069,15 @@ def renew_ssh(username: str, new_exp_date: str) -> bool:
                 acc = database.get_account_by_username(username)
                 pwd = acc.get("uuid", "") if acc else ""
                 ip_limit = str(acc.get("ip_limit", 1)) if acc else "1"
-                new_lines.append(f"### {username} {new_exp_date} {pwd} {ip_limit}\n")
+                quota_val = str(acc.get("quota_gb", 0)) if acc else "0"
+                new_lines.append(f"### {username} {new_exp_date} {pwd} {ip_limit} {quota_val}\n")
             with open(db_path, "w", encoding="utf-8") as f:
                 f.writelines(new_lines)
+            try:
+                with open(f"/etc/limit/ssh/{username}", "w") as f:
+                    f.write("0")
+            except Exception:
+                pass
         except Exception as e:
             logger.error(f"Failed to update {db_path}: {e}")
     return True

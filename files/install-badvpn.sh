@@ -111,7 +111,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:%i --max-clients 500 --loglevel warning
+ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 0.0.0.0:%i --max-clients 500 --loglevel warning
 Restart=always
 RestartSec=3
 LimitNOFILE=65535
