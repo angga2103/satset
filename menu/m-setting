@@ -52,24 +52,25 @@ echo -e "${ungu}[${BIWhite}09${ungu}] ${NC}${BIWhite}Rebuild VPS${NC}"
 echo -e "${ungu}[${BIWhite}10${ungu}] ${NC}${BIWhite}Status TCP BBR & Anti-DDoS${NC}"
 echo -e "${ungu}[${BIWhite}11${ungu}] ${NC}${BIWhite}Status BadVPN UDPGW (Gaming)${NC}"
 echo -e "${BIWhite}──────────────────────────────────────${NC}"
-echo -e "${Lime}Input x or [ Ctrl+C ] » To-${BIWhite}Exit${NC}"
+echo -e "${Lime}Input x atau 0 untuk kembali ke Menu Utama${NC}"
 echo -e "${BIWhite}──────────────────────────────────────${NC}"
 echo ""
-read -p "Select menu :" opt
+echo -ne "\033[1;36mSelect menu [01-11] or [x]: \033[0m"
+read -r opt
 echo -e ""
 case $opt in
-1) clear ; restart ;;
-2) clear ; ganti-id ;;
-3) clear ; setupreboot ;;
-4) clear ; autoreboot ;;
-5) clear ; speedtest ; read -n 1 -s -r -p "Press [ Enter ] to back on menu" ; m-setting ;;
-6) clear ; m-mulog ;;
-7) clear ; gotop ; read -n 1 -s -r -p "Press [ Enter ] to back on menu" ; m-setting ;;
-8) clear ; prot ;;
-9) clear ; m-rebuild ;;
-10) clear ; bbr ; m-setting ;;
-11) clear ; badvpn ; m-setting ;;
-0) clear ; menu ; exit ;;
-x) menu ;;
-*) echo "anda salah tekan" ; sleep 1 ; m-setting ;;
+1|01) clear ; restart ;;
+2|02) clear ; ganti-id ;;
+3|03) clear ; setupreboot ;;
+4|04) clear ; autoreboot ;;
+5|05) clear ; speedtest ; echo -ne "\033[1;36mPress [ Enter ] to back on menu...\033[0m" ; read -n 1 -s -r ; m-setting ;;
+6|06) clear ; m-mulog ;;
+7|07) clear ; gotop ; echo -ne "\033[1;36mPress [ Enter ] to back on menu...\033[0m" ; read -n 1 -s -r ; m-setting ;;
+8|08) clear ; prot ;;
+9|09) clear ; m-rebuild ;;
+10|10) clear ; bbr ; m-setting ;;
+11|11) clear ; badvpn ; m-setting ;;
+0|00) clear ; menu ; exit ;;
+x|X) menu ;;
+*) echo "Pilihan tidak valid." ; sleep 1 ; m-setting ;;
 esac
