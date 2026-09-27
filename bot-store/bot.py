@@ -15,6 +15,7 @@ import database
 import pakasir
 import xray_manager
 import payg_worker
+import node_client
 
 # Configure logging
 logging.basicConfig(
@@ -66,9 +67,11 @@ def render_admin_panel(user_id: int):
     stats = database.get_total_stats()
     active_sessions = xray_manager.get_active_sessions()
     locked_accs = database.get_locked_accounts()
+    all_nodes = database.get_all_nodes()
 
     text = (
         f"🛠️ <b>ADMINISTRATOR PANEL</b>\n\n"
+        f"🌐 Total Server Node : <b>{len(all_nodes) + 1} Server</b> (1 Master, {len(all_nodes)} Cabang)\n"
         f"👥 Total Pengguna Bot : <b>{stats['users']}</b>\n"
         f"📱 Total Akun VPN     : <b>{stats['accounts']}</b>\n"
         f"🟢 User Sedang Online  : <b>{len(active_sessions)} User</b>\n"
@@ -77,6 +80,7 @@ def render_admin_panel(user_id: int):
         f"Pilih menu manajemen di bawah ini:"
     )
     markup = types.InlineKeyboardMarkup(row_width=2)
+    b_nodes = types.InlineKeyboardButton("🌐 Kelola Server Node (Multi-VPS)", callback_data="admin_nodes_menu")
     b_rules = types.InlineKeyboardButton("⚙️ Rules & Tarif Server", callback_data="admin_rules_menu")
     b_mon = types.InlineKeyboardButton("👥 Live Monitoring & User", callback_data="admin_monitor_users")
     b_lock = types.InlineKeyboardButton(f"🔒 Akun Terkunci ({len(locked_accs)})", callback_data="admin_list_suspended")
@@ -85,6 +89,7 @@ def render_admin_panel(user_id: int):
     b_users = types.InlineKeyboardButton("📋 List Pengguna Bot", callback_data="admin_list_users")
     b_back = types.InlineKeyboardButton("🔙 Menu Utama", callback_data="menu_home")
     
+    markup.add(b_nodes)
     markup.add(b_rules, b_mon)
     markup.add(b_lock, b_saldo)
     markup.add(b_bc, b_users)
@@ -316,6 +321,135 @@ def callback_buy_monthly(call):
     )
     bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
 
+def execute_create_trial(user_id: int, proto: str, node_id: int = 0):
+    if user_id in trial_locks or database.has_used_trial(user_id):
+        bot.send_message(user_id, "Anda sudah pernah menggunakan jatah Trial Gratis atau proses sedang berjalan.")
+        return
+
+    trial_locks.add(user_id)
+    uname = f"trial{str(user_id)[-4:]}{int(time.time()) % 1000}"
+    cfg = load_config()
+    trial_quota = min(10, cfg.get("DEFAULT_QUOTA_GB", 350))
+    trial_ip = cfg.get("DEFAULT_IP_LIMIT", 1)
+
+    node_obj = database.get_node_by_id(node_id)
+    node_name = node_obj.get("name", "Master VPS") if node_obj else "Master VPS"
+    node_flag = node_obj.get("flag", "👑") if node_obj else "👑"
+
+    wait_msg = bot.send_message(user_id, f"⏳ <i>Membuat akun Trial {proto.upper()} di {node_flag} {node_name}...</i>")
+    try:
+        acc = node_client.create_account(node_id, proto, uname, days=1, quota_gb=trial_quota, ip_limit=trial_ip)
+        database.add_vpn_account(user_id, proto, uname, acc["uuid"], "trial", acc["exp_date"], acc["primary_link"], quota_gb=trial_quota, ip_limit=trial_ip, price_paid=0, node_id=node_id)
+        bot.delete_message(user_id, wait_msg.message_id)
+        send_account_details(user_id, acc, title=f"🎉 AKUN TRIAL 1 HARI BERHASIL DIBUAT ({node_name})")
+    except Exception as e:
+        bot.send_message(user_id, f"Gagal membuat akun trial: {e}")
+    finally:
+        trial_locks.discard(user_id)
+
+def ask_server_node_or_proceed(user_id: int, proto: str, flow_type: str, price: int = 0, message_id: int = None):
+    active_remote = database.get_active_nodes()
+    if not active_remote:
+        if flow_type == "monthly":
+            user_states[user_id] = {
+                "action": "wait_username_monthly",
+                "proto": proto,
+                "price": price,
+                "node_id": 0
+            }
+            text = (
+                f"📝 <b>MEMBUAT AKUN {proto.upper()} (30 HARI)</b>\n\n"
+                f"Silakan ketik <b>Username</b> yang Anda inginkan:\n"
+                f"<i>(Hanya huruf dan angka, tanpa spasi, 3-15 karakter)</i>"
+            )
+            bot.send_message(user_id, text, reply_markup=back_home_keyboard())
+        elif flow_type == "payg":
+            user_states[user_id] = {
+                "action": "wait_username_payg",
+                "proto": proto,
+                "daily_price": price,
+                "node_id": 0
+            }
+            text = (
+                f"⚡ <b>AKTIVASI PAYG {proto.upper()}</b>\n\n"
+                f"Biaya hari pertama sebesar Rp {price:,} akan dipotong saat akun dibuat.\n"
+                f"Silakan ketik <b>Username</b> yang Anda inginkan (3-15 karakter):"
+            )
+            bot.send_message(user_id, text, reply_markup=back_home_keyboard())
+        elif flow_type == "trial":
+            execute_create_trial(user_id, proto, node_id=0)
+        return
+
+    # Multi-node selector
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("👑 🇮🇩 Master Server (Indonesia)", callback_data=f"picknode_{flow_type}_{proto}_0"))
+    for n in active_remote:
+        flag = n.get("flag", "🌐")
+        name = n.get("name", f"Node #{n['id']}")
+        markup.add(types.InlineKeyboardButton(f"{flag} {name}", callback_data=f"picknode_{flow_type}_{proto}_{n['id']}"))
+    markup.add(types.InlineKeyboardButton("🔙 Menu Utama", callback_data="menu_home"))
+
+    text = (
+        f"🌐 <b>PILIH LOKASI SERVER VPN</b>\n\n"
+        f"Protokol: <b>{proto.upper()}</b> ({flow_type.upper()})\n\n"
+        f"Silakan pilih server node yang ingin digunakan untuk akun Anda:"
+    )
+    if message_id:
+        try:
+            bot.edit_message_text(text, chat_id=user_id, message_id=message_id, reply_markup=markup)
+            return
+        except Exception:
+            pass
+    bot.send_message(user_id, text, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("picknode_"))
+def callback_picked_server_node(call):
+    user_id = call.from_user.id
+    parts = call.data.split("_")
+    if len(parts) >= 4:
+        flow_type = parts[1]
+        proto = parts[2]
+        node_id = int(parts[3])
+
+        cfg = load_config()
+        node_obj = database.get_node_by_id(node_id)
+        node_label = f"{node_obj.get('flag', '🌐')} {node_obj.get('name', 'Server')}" if node_obj else "Server"
+
+        if flow_type == "monthly":
+            price = cfg.get("PRICE_MONTHLY", 8000)
+            user_states[user_id] = {
+                "action": "wait_username_monthly",
+                "proto": proto,
+                "price": price,
+                "node_id": node_id
+            }
+            text = (
+                f"📝 <b>MEMBUAT AKUN {proto.upper()} (30 HARI)</b>\n"
+                f"Lokasi: <b>{node_label}</b>\n\n"
+                f"Silakan ketik <b>Username</b> yang Anda inginkan:\n"
+                f"<i>(Hanya huruf dan angka, tanpa spasi, 3-15 karakter)</i>"
+            )
+            bot.send_message(user_id, text, reply_markup=back_home_keyboard())
+
+        elif flow_type == "payg":
+            daily_price = cfg.get("PRICE_PAYG_DAILY", 300)
+            user_states[user_id] = {
+                "action": "wait_username_payg",
+                "proto": proto,
+                "daily_price": daily_price,
+                "node_id": node_id
+            }
+            text = (
+                f"⚡ <b>AKTIVASI PAYG {proto.upper()}</b>\n"
+                f"Lokasi: <b>{node_label}</b>\n\n"
+                f"Biaya hari pertama sebesar Rp {daily_price:,} akan dipotong saat akun dibuat.\n"
+                f"Silakan ketik <b>Username</b> yang Anda inginkan (3-15 karakter):"
+            )
+            bot.send_message(user_id, text, reply_markup=back_home_keyboard())
+
+        elif flow_type == "trial":
+            execute_create_trial(user_id, proto, node_id=node_id)
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_monthly_"))
 def callback_choose_monthly_proto(call):
     user_id = call.from_user.id
@@ -340,18 +474,7 @@ def callback_choose_monthly_proto(call):
         bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
         return
 
-    user_states[user_id] = {
-        "action": "wait_username_monthly",
-        "proto": proto,
-        "price": price
-    }
-    
-    text = (
-        f"📝 <b>MEMBUAT AKUN {proto.upper()} (30 HARI)</b>\n\n"
-        f"Silakan ketik <b>Username</b> yang Anda inginkan:\n"
-        f"<i>(Hanya huruf dan angka, tanpa spasi, 3-15 karakter)</i>"
-    )
-    bot.send_message(user_id, text, reply_markup=back_home_keyboard())
+    ask_server_node_or_proceed(user_id, proto, flow_type="monthly", price=price, message_id=call.message.message_id)
 
 # PAYG flow
 @bot.callback_query_handler(func=lambda call: call.data == "menu_buy_payg")
@@ -408,18 +531,7 @@ def callback_choose_payg_proto(call):
         bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
         return
 
-    user_states[user_id] = {
-        "action": "wait_username_payg",
-        "proto": proto,
-        "daily_price": daily_price
-    }
-    
-    text = (
-        f"⚡ <b>AKTIVASI PAYG {proto.upper()}</b>\n\n"
-        f"Biaya hari pertama sebesar Rp {daily_price:,} akan dipotong saat akun dibuat.\n"
-        f"Silakan ketik <b>Username</b> yang Anda inginkan (3-15 karakter):"
-    )
-    bot.send_message(user_id, text, reply_markup=back_home_keyboard())
+    ask_server_node_or_proceed(user_id, proto, flow_type="payg", price=daily_price, message_id=call.message.message_id)
 
 # Free Trial Flow
 @bot.callback_query_handler(func=lambda call: call.data == "menu_trial")
@@ -455,23 +567,8 @@ def callback_take_trial(call):
         bot.answer_callback_query(call.id, "Anda sudah pernah menggunakan jatah Trial Gratis atau proses sedang berjalan.", show_alert=True)
         return
 
-    trial_locks.add(user_id)
     proto = call.data.replace("take_trial_", "")
-    uname = f"trial{str(user_id)[-4:]}{int(time.time()) % 1000}"
-    cfg = load_config()
-    trial_quota = min(10, cfg.get("DEFAULT_QUOTA_GB", 350))
-    trial_ip = cfg.get("DEFAULT_IP_LIMIT", 1)
-    
-    wait_msg = bot.send_message(user_id, f"⏳ <i>Membuat akun Trial {proto.upper()}...</i>")
-    try:
-        acc = xray_manager.create_account(proto, uname, days=1, quota_gb=trial_quota, ip_limit=trial_ip)
-        database.add_vpn_account(user_id, proto, uname, acc["uuid"], "trial", acc["exp_date"], acc["primary_link"], quota_gb=trial_quota, ip_limit=trial_ip, price_paid=0)
-        bot.delete_message(user_id, wait_msg.message_id)
-        send_account_details(user_id, acc, title="🎉 AKUN TRIAL 1 HARI BERHASIL DIBUAT")
-    except Exception as e:
-        bot.send_message(user_id, f"Gagal membuat akun trial: {e}")
-    finally:
-        trial_locks.discard(user_id)
+    ask_server_node_or_proceed(user_id, proto, flow_type="trial", price=0, message_id=call.message.message_id)
 
 # My accounts list
 @bot.callback_query_handler(func=lambda call: call.data == "menu_my_accounts")
@@ -562,7 +659,9 @@ def callback_account_detail(call):
         bot.answer_callback_query(call.id, "Akun tidak ditemukan.", show_alert=True)
         return
 
-    domain = xray_manager.get_domain()
+    node_flag = acc.get("node_flag") or "👑"
+    node_name = acc.get("node_name") or "Master VPS"
+    domain = acc.get("node_host") or xray_manager.get_domain()
     proto = acc['protocol'].upper()
     uname = acc['vpn_username']
     pwd = acc['uuid']
@@ -586,6 +685,7 @@ def callback_account_detail(call):
         payload = f"GET / HTTP/1.1[crlf]Host: {domain}[crlf]Upgrade: websocket[crlf][crlf]"
         text = (
             f"📱 <b>DETAIL AKUN SSH & WEBSOCKET</b>\n\n"
+            f"Server Lokasi : <b>{node_flag} {node_name}</b>\n"
             f"Username      : <code>{uname}</code>\n"
             f"Password      : <code>{pwd}</code>\n"
             f"Domain / Host : <code>{domain}</code>\n"
@@ -605,14 +705,15 @@ def callback_account_detail(call):
     else:
         text = (
             f"📱 <b>DETAIL AKUN VPN</b>\n\n"
-            f"Protokol: <b>{proto}</b>\n"
-            f"Username: <code>{uname}</code>\n"
-            f"UUID / Password: <code>{pwd}</code>\n"
-            f"Paket: <b>{paket_display}</b>\n"
-            f"Limit IP: <code>{ip_display}</code>\n"
-            f"Limit Kuota: <code>{quota_display}</code>\n"
-            f"Masa Aktif: <b>{exp_display}</b>\n"
-            f"Domain: <code>{domain}</code>\n\n"
+            f"Server Lokasi : <b>{node_flag} {node_name}</b>\n"
+            f"Protokol      : <b>{proto}</b>\n"
+            f"Username      : <code>{uname}</code>\n"
+            f"UUID / Pass   : <code>{pwd}</code>\n"
+            f"Paket         : <b>{paket_display}</b>\n"
+            f"Limit IP      : <code>{ip_display}</code>\n"
+            f"Limit Kuota   : <code>{quota_display}</code>\n"
+            f"Masa Aktif    : <b>{exp_display}</b>\n"
+            f"Domain        : <code>{domain}</code>\n\n"
             f"🔗 <b>Config Link:</b>\n"
             f"<code>{acc['config_link']}</code>"
         )
@@ -796,10 +897,11 @@ def callback_confirm_renew(call):
         new_exp_str = new_exp_obj.strftime("%Y-%m-%d")
         new_exp_human = new_exp_obj.strftime("%d %b, %Y")
 
+        node_id = acc.get("node_id", 0)
         try:
-            xray_manager.renew_account(proto, uname, new_exp_str, user_uuid=uuid_val)
+            node_client.renew_account(node_id, proto, uname, new_exp_str, user_uuid=uuid_val)
         except Exception as e:
-            logger.error(f"Error renewing {uname} on server: {e}")
+            logger.error(f"Error renewing {uname} on node {node_id}: {e}")
 
         new_plan = "monthly" if plan_type == "trial" else None
         database.renew_vpn_account_db(acc_id, new_exp_str, additional_price=cost, new_plan_type=new_plan)
@@ -922,11 +1024,12 @@ def callback_confirm_cancel_account(call):
     ref_info = calculate_account_refund(acc)
     refund_amt = ref_info["refund_amount"]
 
-    # 1. Delete from VPS server (xray / ssh)
+    # 1. Delete from VPS server (xray / ssh on target node)
+    node_id = acc.get("node_id", 0)
     try:
-        xray_manager.delete_account(proto, uname)
+        node_client.delete_account(node_id, proto, uname)
     except Exception as e:
-        logger.error(f"Error deleting {uname} from server: {e}")
+        logger.error(f"Error deleting {uname} from node {node_id}: {e}")
 
     # 2. Delete from database (removes from vpn_accounts & payg_subscriptions)
     database.delete_vpn_account_by_username(uname)
@@ -1015,6 +1118,305 @@ def callback_admin_menu(call):
 
     text, markup = render_admin_panel(user_id)
     bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+# --- Multi-Node / Multi-VPS Orchestration Handlers ---
+
+def render_node_control_dashboard(node_id: int):
+    node = database.get_node_by_id(node_id)
+    if not node:
+        return "❌ Node tidak ditemukan.", None
+
+    status = node_client.ping_node(node_id)
+    is_online = status.get("is_online", False)
+    ping_ms = status.get("ping_ms", 0)
+
+    name = node.get("name", f"Node #{node_id}")
+    flag = node.get("flag", "🌐")
+    host = node.get("host", "127.0.0.1")
+    port = node.get("port", 9090)
+    domain = status.get("domain", host)
+    uptime = status.get("uptime", "-")
+    is_master = (node_id == 0)
+
+    online_badge = "🟢 ONLINE" if is_online else "🔴 OFFLINE / GAGAL HUBUNG"
+    cpu = status.get("cpu", {})
+    ram = status.get("ram", {})
+    disk = status.get("disk", {})
+    svcs = status.get("services", {})
+    act_users = status.get("active_sessions_count", 0)
+    total_acc = status.get("total_accounts", 0)
+
+    def s_icon(s):
+        return "🟢 Active" if s == "active" else "🔴 Inactive"
+
+    text = (
+        f"🌐 <b>KONTROL & MANAJEMEN SERVER NODE</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Server      : <b>{flag} {name}</b> ({'👑 Master VPS' if is_master else f'Node #{node_id}'})\n"
+        f"Status      : <b>{online_badge}</b> ({ping_ms} ms)\n"
+        f"Host / IP   : <code>{host}:{port}</code>\n"
+        f"Domain      : <code>{domain}</code>\n"
+        f"Uptime      : <b>{uptime}</b>\n\n"
+        f"📊 <b>SUMBER DAYA & KAPASITAS:</b>\n"
+        f"• CPU Load  : <b>{cpu.get('cpu_percent', 0)}%</b> [{cpu.get('cores', 1)} Core]\n"
+        f"• RAM       : <b>{ram.get('used_mb', 0)} MB / {ram.get('total_mb', 0)} MB</b> ({ram.get('percent', 0)}%)\n"
+        f"• Disk      : <b>{disk.get('used_gb', 0)} GB / {disk.get('total_gb', 0)} GB</b> ({disk.get('percent', 0)}%)\n"
+        f"• Akun Aktif: <b>{act_users} Online</b> / {total_acc} Terdaftar\n\n"
+        f"⚙️ <b>STATUS LAYANAN VPS:</b>\n"
+        f"• Xray Core     : {s_icon(svcs.get('xray', 'inactive'))}\n"
+        f"• Dropbear SSH  : {s_icon(svcs.get('dropbear', 'inactive'))}\n"
+        f"• OpenSSH       : {s_icon(svcs.get('ssh', 'inactive'))}\n"
+        f"• Nginx Proxy   : {s_icon(svcs.get('nginx', 'inactive'))}\n"
+        f"• BadVPN UDPGW  : {s_icon(svcs.get('badvpn', 'inactive'))}\n"
+        f"• Smart WARP    : {s_icon(svcs.get('warp', 'inactive'))}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"<i>Pilih perintah kontrol di bawah ini:</i>"
+    )
+
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    b_rxray = types.InlineKeyboardButton("🔄 Restart Xray", callback_data=f"nact_restart_xray_{node_id}")
+    b_rssh = types.InlineKeyboardButton("🔄 Restart SSH", callback_data=f"nact_restart_ssh_{node_id}")
+    b_rbadvpn = types.InlineKeyboardButton("🔄 Restart BadVPN", callback_data=f"nact_restart_badvpn_{node_id}")
+    b_rnginx = types.InlineKeyboardButton("🔄 Restart Nginx", callback_data=f"nact_restart_nginx_{node_id}")
+    markup.add(b_rxray, b_rssh)
+    markup.add(b_rbadvpn, b_rnginx)
+
+    b_rall = types.InlineKeyboardButton("⚡ Restart Semua Layanan", callback_data=f"nact_restart_all_{node_id}")
+    markup.add(b_rall)
+
+    b_cram = types.InlineKeyboardButton("🧹 Bersihkan RAM", callback_data=f"nact_clean_ram_{node_id}")
+    b_clog = types.InlineKeyboardButton("🗑️ Bersihkan Log", callback_data=f"nact_clear_logs_{node_id}")
+    markup.add(b_cram, b_clog)
+
+    b_twarp = types.InlineKeyboardButton("🛡️ Status WARP", callback_data=f"nact_status_warp_{node_id}")
+    b_reboot = types.InlineKeyboardButton("⚠️ Reboot VPS", callback_data=f"nact_reboot_prompt_{node_id}")
+    markup.add(b_twarp, b_reboot)
+
+    is_act = node.get("is_active", 1)
+    act_btn_txt = "⏸️ Nonaktifkan di Store" if is_act else "▶️ Aktifkan di Store"
+    b_toggle_act = types.InlineKeyboardButton(act_btn_txt, callback_data=f"nact_toggle_active_{node_id}")
+    b_rename = types.InlineKeyboardButton("🏷️ Ganti Nama / Flag", callback_data=f"nact_rename_prompt_{node_id}")
+    markup.add(b_toggle_act, b_rename)
+
+    if not is_master:
+        b_del = types.InlineKeyboardButton("❌ Hapus Server (Unlink)", callback_data=f"nact_delete_prompt_{node_id}")
+        markup.add(b_del)
+
+    b_refresh = types.InlineKeyboardButton("🔄 Refresh Status", callback_data=f"node_manage_{node_id}")
+    b_back = types.InlineKeyboardButton("🔙 Daftar Semua Node", callback_data="admin_nodes_menu")
+    markup.add(b_refresh)
+    markup.add(b_back)
+
+    return text, markup
+
+@bot.callback_query_handler(func=lambda call: call.data in ["admin_nodes_menu", "admin_nodes_refresh"])
+def callback_admin_nodes_menu(call):
+    user_id = call.from_user.id
+    if not is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
+        return
+
+    summary = node_client.get_all_nodes_summary()
+    text = (
+        f"🌐 <b>PENGELOLAAN SERVER NODE (MULTI-VPS)</b>\n\n"
+        f"Total Server Terhubung: <b>{len(summary)} Server</b>\n\n"
+    )
+    markup = types.InlineKeyboardMarkup(row_width=1)
+
+    for n in summary:
+        nid = n["id"]
+        flag = n["flag"]
+        name = n["name"]
+        online_icon = "🟢" if n["is_online"] else "🔴"
+        status_str = f"Online [{n['ping_ms']}ms]" if n["is_online"] else "Offline"
+        role_label = "👑 Master" if n["is_master"] else f"Node #{nid}"
+
+        text += (
+            f"{flag} <b>{name}</b> ({role_label})\n"
+            f"  • Status : {online_icon} {status_str}\n"
+            f"  • Host   : <code>{n['host']}</code>\n"
+            f"  • Beban  : CPU {n['cpu_percent']}% | RAM {n['ram_percent']}%\n"
+            f"  • Online : <b>{n['active_users']} User Aktif</b>\n\n"
+        )
+        markup.add(types.InlineKeyboardButton(f"⚙️ Kelola: {flag} {name} ({online_icon})", callback_data=f"node_manage_{nid}"))
+
+    markup.add(types.InlineKeyboardButton("➕ Tambah Server Node Baru", callback_data="admin_node_add"))
+    markup.add(types.InlineKeyboardButton("🔄 Refresh Status Semua Server", callback_data="admin_nodes_refresh"))
+    markup.add(types.InlineKeyboardButton("🔙 Panel Admin", callback_data="menu_admin"))
+
+    bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_node_add")
+def callback_admin_node_add(call):
+    user_id = call.from_user.id
+    if not is_admin(user_id):
+        return
+
+    user_states[user_id] = {"action": "wait_node_token"}
+    text = (
+        f"➕ <b>TAMBAH SERVER NODE CABANG</b>\n\n"
+        f"1. Install script SATSET di VPS cabang yang baru.\n"
+        f"2. Buka terminal VPS cabang, jalankan perintah:\n"
+        f"   <code>satset-node token</code>\n"
+        f"3. Copy token yang muncul lalu paste/kirimkan di chat bot ini.\n\n"
+        f"<i>Format token standar:</i>\n"
+        f"<code>satset-node://IP_VPS:9090#key=APIKEY</code>\n\n"
+        f"<i>Atau format manual:</i>\n"
+        f"<code>IP_VPS:PORT:APIKEY:NamaServer</code>"
+    )
+    bot.send_message(user_id, text, reply_markup=back_home_keyboard())
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("node_manage_"))
+def callback_node_manage(call):
+    user_id = call.from_user.id
+    if not is_admin(user_id):
+        return
+
+    nid = int(call.data.replace("node_manage_", ""))
+    text, markup = render_node_control_dashboard(nid)
+    if not markup:
+        bot.answer_callback_query(call.id, text, show_alert=True)
+        return
+
+    bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("nact_"))
+def callback_node_action(call):
+    user_id = call.from_user.id
+    if not is_admin(user_id):
+        return
+
+    data = call.data.replace("nact_", "")
+    parts = data.rsplit("_", 1)
+    if len(parts) != 2:
+        return
+
+    action_type = parts[0]
+    node_id = int(parts[1])
+    node = database.get_node_by_id(node_id)
+    node_name = node.get("name", f"Node #{node_id}") if node else f"Node #{node_id}"
+
+    if action_type == "restart_xray":
+        bot.answer_callback_query(call.id, f"⏳ Merestart Xray Core di {node_name}...")
+        node_client.restart_service(node_id, "xray")
+        bot.answer_callback_query(call.id, f"✅ Xray Core berhasil direstart di {node_name}!", show_alert=True)
+        text, markup = render_node_control_dashboard(node_id)
+        bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+    elif action_type == "restart_ssh":
+        bot.answer_callback_query(call.id, f"⏳ Merestart SSH & Dropbear di {node_name}...")
+        node_client.restart_service(node_id, "ssh")
+        bot.answer_callback_query(call.id, f"✅ SSH & Dropbear berhasil direstart di {node_name}!", show_alert=True)
+        text, markup = render_node_control_dashboard(node_id)
+        bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+    elif action_type == "restart_badvpn":
+        bot.answer_callback_query(call.id, f"⏳ Merestart BadVPN UDPGW di {node_name}...")
+        node_client.restart_service(node_id, "badvpn")
+        bot.answer_callback_query(call.id, f"✅ BadVPN UDPGW (7100, 7200, 7300) berhasil direstart!", show_alert=True)
+        text, markup = render_node_control_dashboard(node_id)
+        bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+    elif action_type == "restart_nginx":
+        bot.answer_callback_query(call.id, f"⏳ Merestart Nginx Proxy di {node_name}...")
+        node_client.restart_service(node_id, "nginx")
+        bot.answer_callback_query(call.id, f"✅ Nginx Proxy berhasil direstart di {node_name}!", show_alert=True)
+        text, markup = render_node_control_dashboard(node_id)
+        bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+    elif action_type == "restart_all":
+        bot.answer_callback_query(call.id, f"⏳ Merestart semua layanan di {node_name}...")
+        node_client.restart_service(node_id, "all")
+        bot.answer_callback_query(call.id, f"✅ Semua layanan (Xray, SSH, BadVPN, Nginx) berhasil direstart di {node_name}!", show_alert=True)
+        text, markup = render_node_control_dashboard(node_id)
+        bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+    elif action_type == "clean_ram":
+        bot.answer_callback_query(call.id, f"⏳ Membersihkan RAM Cache di {node_name}...")
+        node_client.system_control(node_id, "clean_ram")
+        bot.answer_callback_query(call.id, f"🧹 RAM Cache & Buffer di {node_name} berhasil dibersihkan!", show_alert=True)
+        text, markup = render_node_control_dashboard(node_id)
+        bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+    elif action_type == "clear_logs":
+        bot.answer_callback_query(call.id, f"⏳ Membersihkan file log di {node_name}...")
+        node_client.system_control(node_id, "clear_logs")
+        bot.answer_callback_query(call.id, f"🗑️ Seluruh file log di {node_name} berhasil dibersihkan!", show_alert=True)
+        text, markup = render_node_control_dashboard(node_id)
+        bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+    elif action_type == "status_warp":
+        bot.answer_callback_query(call.id, "Memeriksa status Smart WARP...")
+        res = node_client.warp_control(node_id, "status")
+        msg = res.get("message", "Tidak ada respon WARP")
+        bot.send_message(user_id, f"🛡️ <b>STATUS SMART WARP ({node_name}):</b>\n\n<code>{msg}</code>")
+
+    elif action_type == "reboot_prompt":
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("🔴 YA, REBOOT SEKARANG", callback_data=f"nact_reboot_confirm_{node_id}"),
+            types.InlineKeyboardButton("🔙 BATAL", callback_data=f"node_manage_{node_id}")
+        )
+        text = (
+            f"⚠️ <b>KONFIRMASI REBOOT SERVER</b>\n\n"
+            f"Apakah Anda yakin ingin me-reboot server <b>{node_name}</b>?\n"
+            f"<i>Koneksi seluruh user di server ini akan terputus sementara hingga boot selesai.</i>"
+        )
+        bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+    elif action_type == "reboot_confirm":
+        if node_id == 0:
+            bot.answer_callback_query(call.id, "Master VPS tidak dapat di-reboot melalui remote node menu demi stabilitas bot.", show_alert=True)
+            return
+        bot.answer_callback_query(call.id, f"🔄 Mengirim sinyal reboot ke {node_name}...")
+        node_client.system_control(node_id, "reboot")
+        bot.send_message(user_id, f"🔄 <b>Server {node_name} sedang memulai proses reboot.</b>\nServer akan online kembali dalam 1-2 menit.")
+        callback_admin_nodes_menu(call)
+
+    elif action_type == "toggle_active":
+        if not node:
+            return
+        curr_act = node.get("is_active", 1)
+        new_act = 0 if curr_act else 1
+        database.update_node_status(node_id, is_active=new_act)
+        status_txt = "dinonaktifkan dari Store (maintenance)" if new_act == 0 else "diaktifkan kembali di Store"
+        bot.answer_callback_query(call.id, f"Server {node_name} berhasil {status_txt}.", show_alert=True)
+        text, markup = render_node_control_dashboard(node_id)
+        bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+    elif action_type == "rename_prompt":
+        user_states[user_id] = {"action": "wait_node_rename", "node_id": node_id}
+        text = (
+            f"🏷️ <b>GANTI NAMA / BENDERA SERVER</b>\n\n"
+            f"Server saat ini: <b>{node_name}</b>\n\n"
+            f"Ketik nama dan bendera baru untuk server ini:\n"
+            f"<i>Contoh:</i> <code>🇸🇬 Singapore DO</code> atau <code>🇮🇩 Biznet Jakarta</code>"
+        )
+        bot.send_message(user_id, text, reply_markup=back_home_keyboard())
+
+    elif action_type == "delete_prompt":
+        if node_id == 0:
+            bot.answer_callback_query(call.id, "Master VPS tidak dapat dihapus.", show_alert=True)
+            return
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("🔴 YA, HAPUS SERVER INI", callback_data=f"nact_delete_confirm_{node_id}"),
+            types.InlineKeyboardButton("🔙 BATAL", callback_data=f"node_manage_{node_id}")
+        )
+        text = (
+            f"⚠️ <b>KONFIRMASI HAPUS SERVER NODE</b>\n\n"
+            f"Apakah Anda yakin ingin menghapus server <b>{node_name}</b> dari cluster?\n"
+            f"• Server akan dihapus dari daftar node.\n"
+            f"• Akun VPN di server ini akan dialihkan referensinya ke Master."
+        )
+        bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+
+    elif action_type == "delete_confirm":
+        if node_id == 0:
+            return
+        database.delete_node(node_id)
+        bot.answer_callback_query(call.id, f"Server {node_name} berhasil dihapus dari cluster.", show_alert=True)
+        callback_admin_nodes_menu(call)
 
 # --- Dynamic Rules Management ---
 
@@ -1284,28 +1686,36 @@ def callback_admin_users_active_login(call):
     if not is_admin(user_id):
         bot.answer_callback_query(call.id, "⛔ Akses ditolak! Khusus Admin.", show_alert=True)
         return
-    active_sessions = xray_manager.get_active_sessions()
 
-    if not active_sessions:
+    grouped = node_client.get_all_active_sessions()
+    total_active = sum(len(n["sessions"]) for n in grouped.values())
+
+    if total_active == 0:
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("🔙 Kembali", callback_data="admin_monitor_users"))
-        bot.edit_message_text("🟢 <b>Tidak ada user yang sedang aktif login saat ini.</b>", chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
+        bot.edit_message_text("🟢 <b>Tidak ada user yang sedang aktif login di seluruh cluster server saat ini.</b>", chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
         return
 
-    text = f"🟢 <b>USER SEDANG LOGIN AKTIF ({len(active_sessions)} User):</b>\n\n"
+    text = f"🟢 <b>USER SEDANG LOGIN AKTIF CLUSTER ({total_active} User Total):</b>\n\n"
     markup = types.InlineKeyboardMarkup(row_width=1)
 
-    for uname, ips in list(active_sessions.items())[:10]:
-        usage = xray_manager.get_user_usage_and_status(uname)
-        proto = usage["protocol"].upper()
-        ip_sample = ", ".join(ips[:2])
-        text += (
-            f"• <b>{uname}</b> ({proto})\n"
-            f"  IP ({len(ips)}/{usage['ip_limit']}): <code>{ip_sample}</code>\n"
-            f"  Kuota: <b>{usage['used_human']} / {usage['quota_human']}</b> ({usage['percent']:.1f}%)\n"
-            f"  Bar: <code>{usage['progress_bar']}</code>\n\n"
-        )
-        markup.add(types.InlineKeyboardButton(f"⚙️ Kelola {uname}", callback_data=f"manage_user_{uname}"))
+    for nid, node_data in grouped.items():
+        sess_dict = node_data["sessions"]
+        if not sess_dict:
+            continue
+        text += f"{node_data['node_flag']} <b>{node_data['node_name']}</b> ({len(sess_dict)} User Online):\n"
+        for uname, ips in list(sess_dict.items())[:6]:
+            proto = "VPN"
+            try:
+                acc = database.get_account_by_username(uname)
+                if acc:
+                    proto = acc.get("protocol", "VPN").upper()
+            except Exception:
+                pass
+            ip_sample = ", ".join(ips[:2])
+            text += f"  • <b>{uname}</b> ({proto}) - IP: <code>{ip_sample}</code>\n"
+            markup.add(types.InlineKeyboardButton(f"⚙️ Kelola {uname} ({node_data['node_name']})", callback_data=f"manage_user_{uname}"))
+        text += "\n"
 
     markup.add(types.InlineKeyboardButton("🔙 Kembali ke Monitor", callback_data="admin_monitor_users"))
     bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=markup)
@@ -1565,7 +1975,8 @@ def callback_user_act_delete(call):
     uname = call.data.replace("user_act_delete_", "")
     acc = database.get_account_by_username(uname)
     proto = acc.get("protocol", "vmess") if acc else "vmess"
-    xray_manager.delete_account(proto, uname)
+    node_id = acc.get("node_id", 0) if acc else 0
+    node_client.delete_account(node_id, proto, uname)
     database.delete_vpn_account_by_username(uname)
     bot.answer_callback_query(call.id, f"Akun {uname} telah berhasil dihapus permanen.", show_alert=True)
     callback_admin_monitor_users(call)
@@ -1654,13 +2065,14 @@ def handle_text_inputs(message):
     elif action == "wait_username_monthly":
         proto = state["proto"]
         price = state["price"]
+        node_id = state.get("node_id", 0)
         user_states.pop(user_id, None)
 
         if not re_valid_username(text):
             bot.send_message(user_id, "❌ Username hanya boleh berisi huruf dan angka (3-15 karakter), tanpa simbol atau spasi.")
             return
 
-        if xray_manager.username_exists(text):
+        if node_id == 0 and xray_manager.username_exists(text):
             bot.send_message(user_id, "❌ Username ini sudah digunakan di server. Silakan coba username lain.")
             return
 
@@ -1669,13 +2081,15 @@ def handle_text_inputs(message):
             bot.send_message(user_id, "❌ Saldo Anda tidak mencukupi.")
             return
 
-        wait_msg = bot.send_message(user_id, f"⏳ <i>Membuat akun {proto.upper()} untuk {text}...</i>")
+        node_obj = database.get_node_by_id(node_id)
+        node_label = f"{node_obj.get('flag', '👑')} {node_obj.get('name', 'Server')}" if node_obj else "Server"
+        wait_msg = bot.send_message(user_id, f"⏳ <i>Membuat akun {proto.upper()} untuk {text} di {node_label}...</i>")
         try:
             cfg = load_config()
             q_gb = cfg.get("DEFAULT_QUOTA_GB", 350)
             ip_l = cfg.get("DEFAULT_IP_LIMIT", 1)
-            acc = xray_manager.create_account(proto, text, days=30, quota_gb=q_gb, ip_limit=ip_l)
-            database.add_vpn_account(user_id, proto, text, acc["uuid"], "monthly", acc["exp_date"], acc["primary_link"], quota_gb=q_gb, ip_limit=ip_l, price_paid=price)
+            acc = node_client.create_account(node_id, proto, text, days=30, quota_gb=q_gb, ip_limit=ip_l)
+            database.add_vpn_account(user_id, proto, text, acc["uuid"], "monthly", acc["exp_date"], acc["primary_link"], quota_gb=q_gb, ip_limit=ip_l, price_paid=price, node_id=node_id)
             bot.delete_message(user_id, wait_msg.message_id)
             send_account_details(user_id, acc, title=f"🎉 AKUN {proto.upper()} 30 HARI BERHASIL DIBUAT")
         except Exception as e:
@@ -1687,13 +2101,14 @@ def handle_text_inputs(message):
     elif action == "wait_username_payg":
         proto = state["proto"]
         daily_price = state["daily_price"]
+        node_id = state.get("node_id", 0)
         user_states.pop(user_id, None)
 
         if not re_valid_username(text):
             bot.send_message(user_id, "❌ Username hanya boleh berisi huruf dan angka (3-15 karakter), tanpa simbol atau spasi.")
             return
 
-        if xray_manager.username_exists(text):
+        if node_id == 0 and xray_manager.username_exists(text):
             bot.send_message(user_id, "❌ Username ini sudah digunakan di server. Silakan coba username lain.")
             return
 
@@ -1702,13 +2117,15 @@ def handle_text_inputs(message):
             bot.send_message(user_id, "❌ Saldo Anda tidak mencukupi untuk biaya hari pertama.")
             return
 
-        wait_msg = bot.send_message(user_id, f"⏳ <i>Mengaktifkan langganan PAYG {proto.upper()}...</i>")
+        node_obj = database.get_node_by_id(node_id)
+        node_label = f"{node_obj.get('flag', '👑')} {node_obj.get('name', 'Server')}" if node_obj else "Server"
+        wait_msg = bot.send_message(user_id, f"⏳ <i>Mengaktifkan langganan PAYG {proto.upper()} di {node_label}...</i>")
         try:
             cfg = load_config()
             q_gb = cfg.get("DEFAULT_QUOTA_GB", 350)
             ip_l = cfg.get("DEFAULT_IP_LIMIT", 1)
-            acc = xray_manager.create_account(proto, text, days=3650, quota_gb=q_gb, ip_limit=ip_l)
-            database.add_vpn_account(user_id, proto, text, acc["uuid"], "payg", "PAYG", acc["primary_link"], quota_gb=q_gb, ip_limit=ip_l, price_paid=daily_price)
+            acc = node_client.create_account(node_id, proto, text, days=3650, quota_gb=q_gb, ip_limit=ip_l)
+            database.add_vpn_account(user_id, proto, text, acc["uuid"], "payg", "PAYG", acc["primary_link"], quota_gb=q_gb, ip_limit=ip_l, price_paid=daily_price, node_id=node_id)
             database.add_payg_subscription(user_id, text, proto, "daily")
             acc["plan_type"] = "payg"
             acc["exp_human"] = "⚡ Aktif Selama Saldo Cukup (PAYG Harian)"
@@ -1717,6 +2134,71 @@ def handle_text_inputs(message):
         except Exception as e:
             database.add_balance(user_id, daily_price)
             bot.send_message(user_id, f"❌ Terjadi kesalahan: {e}. Saldo dikembalikan.")
+
+    # Node token input (admin)
+    elif action == "wait_node_token":
+        user_states.pop(user_id, None)
+        if not is_admin(user_id):
+            return
+        wait_msg = bot.send_message(user_id, "⏳ <i>Menguji koneksi ke server node cabang...</i>")
+        try:
+            token_data = node_client.parse_connection_token(text)
+            host = token_data["host"]
+            port = token_data["port"]
+            api_key = token_data["api_key"]
+            default_name = token_data.get("name") or f"Node-{host}"
+
+            test_res = node_client.test_connection(host, port, api_key, timeout=7.0)
+            if test_res.get("status") != "success":
+                err = test_res.get("message", "Handshake gagal")
+                bot.edit_message_text(
+                    f"❌ <b>Gagal Terhubung ke Node!</b>\n\n"
+                    f"Detail Error: <code>{err}</code>\n\n"
+                    f"Pastikan service <code>satset-node</code> aktif di server cabang dan port <code>{port}</code> terbuka.",
+                    chat_id=user_id, message_id=wait_msg.message_id
+                )
+                return
+
+            node_id = database.add_node(name=default_name, host=host, port=port, api_key=api_key, flag="🌐")
+            ping_ms = test_res.get("ping_ms", 0)
+            domain = test_res.get("domain", host)
+            uptime = test_res.get("uptime", "-")
+
+            success_text = (
+                f"🎉 <b>SERVER NODE BERHASIL DITAMBAHKAN!</b>\n\n"
+                f"ID Node  : <b>#{node_id}</b>\n"
+                f"Nama     : <b>{default_name}</b>\n"
+                f"Host/IP  : <code>{host}:{port}</code>\n"
+                f"Domain   : <code>{domain}</code>\n"
+                f"Latency  : <b>{ping_ms} ms</b>\n"
+                f"Uptime   : <b>{uptime}</b>\n\n"
+                f"Server ini sekarang otomatis aktif di Bot Store dan dapat dipilih oleh pelanggan!"
+            )
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton(f"⚙️ Kelola Server #{node_id}", callback_data=f"node_manage_{node_id}"))
+            markup.add(types.InlineKeyboardButton("🔙 Daftar Semua Node", callback_data="admin_nodes_menu"))
+            bot.edit_message_text(success_text, chat_id=user_id, message_id=wait_msg.message_id, reply_markup=markup)
+        except Exception as e:
+            bot.edit_message_text(f"❌ Terjadi kesalahan: {e}", chat_id=user_id, message_id=wait_msg.message_id)
+
+    # Node rename input (admin)
+    elif action == "wait_node_rename":
+        target_nid = state.get("node_id")
+        user_states.pop(user_id, None)
+        if not is_admin(user_id) or not target_nid:
+            return
+        parts = text.split(" ", 1)
+        new_flag = "🌐"
+        new_name = text
+        if len(parts) == 2 and any(ord(c) > 127 for c in parts[0]):
+            new_flag = parts[0]
+            new_name = parts[1]
+
+        database.update_node_info(target_nid, name=new_name, flag=new_flag)
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⚙️ Kembali ke Kontrol Node", callback_data=f"node_manage_{target_nid}"))
+        markup.add(types.InlineKeyboardButton("🔙 Daftar Semua Node", callback_data="admin_nodes_menu"))
+        bot.send_message(user_id, f"✅ <b>Nama server berhasil diubah!</b>\n\nNama Baru: {new_flag} <b>{new_name}</b>", reply_markup=markup)
 
     # Broadcast message (admin)
     elif action == "wait_broadcast":
@@ -1899,7 +2381,9 @@ def re_valid_username(u: str) -> bool:
     return bool(re.match(r"^[a-zA-Z0-9_]{3,15}$", u))
 
 def send_account_details(user_id: int, acc: dict, title: str):
-    domain = acc.get("domain") or xray_manager.get_domain()
+    domain = acc.get("domain") or acc.get("node_host") or xray_manager.get_domain()
+    node_name = acc.get("node_name", "Master VPS")
+    node_flag = acc.get("node_flag", "👑")
     proto = acc["protocol"].upper()
     uname = acc.get("username") or acc.get("vpn_username", "")
     uuid_str = acc.get("uuid", "")
@@ -1911,12 +2395,13 @@ def send_account_details(user_id: int, acc: dict, title: str):
         exp_h = acc.get("exp_human", acc.get("exp_date", ""))
         
     if acc["protocol"].lower() in ["ssh", "openssh", "dropbear"]:
-        ip_srv = acc.get("ip_server", domain)
+        ip_srv = acc.get("ip_server") or acc.get("node_host") or domain
         pwd = acc.get("password", uuid_str)
         payload = acc.get("payload_ws", f"GET / HTTP/1.1[crlf]Host: {domain}[crlf]Upgrade: websocket[crlf][crlf]")
         text = (
             f"<b>{title}</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
+            f"<b>Server Lokasi :</b> {node_flag} <b>{node_name}</b>\n"
             f"<b>Username      :</b> <code>{uname}</code>\n"
             f"<b>Password      :</b> <code>{pwd}</code>\n"
             f"<b>Domain / Host :</b> <code>{domain}</code>\n"
@@ -1936,6 +2421,7 @@ def send_account_details(user_id: int, acc: dict, title: str):
         text = (
             f"<b>{title}</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
+            f"<b>Server Lokasi :</b> {node_flag} <b>{node_name}</b>\n"
             f"<b>Remarks / User:</b> <code>{uname}</code>\n"
             f"<b>Protokol      :</b> <code>{proto}</code>\n"
             f"<b>Domain / Host :</b> <code>{domain}</code>\n"

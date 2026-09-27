@@ -1,0 +1,197 @@
+#!/bin/bash
+# =========================================================
+# SATSET Multi-Node / VPS Cluster Manager
+# =========================================================
+clear
+
+RED='\033[0;31m'
+NC='\033[0m'
+green='\033[0;32m'
+BIYellow='\033[1;93m'
+BIWhite='\033[1;97m'
+Lime='\e[38;5;155m'
+ungu="\e[38;5;99m"
+CYAN="\033[1;36m"
+
+KEY_FILE="/etc/satset/node-key.txt"
+CONF_FILE="/etc/satset/node.conf"
+NODE_BIN="/usr/local/bin/satset-node"
+
+get_domain() {
+    if [ -f /etc/xray/domain ]; then
+        head -n 1 /etc/xray/domain | tr -d '[:space:]'
+    elif [ -f /etc/xray/ipvps ]; then
+        head -n 1 /etc/xray/ipvps | tr -d '[:space:]'
+    else
+        curl -4 -s --max-time 3 ipv4.icanhazip.com 2>/dev/null || echo "127.0.0.1"
+    fi
+}
+
+get_port() {
+    if [ -f "$CONF_FILE" ]; then
+        grep -E "^PORT=" "$CONF_FILE" | cut -d'=' -f2 | tr -d '[:space:]'
+    else
+        echo "9090"
+    fi
+}
+
+get_key() {
+    if [ -f "$KEY_FILE" ]; then
+        cat "$KEY_FILE" | tr -d '[:space:]'
+    else
+        echo ""
+    fi
+}
+
+while true; do
+    clear
+    HOST=$(get_domain)
+    PORT=$(get_port)
+    PORT=${PORT:-9090}
+    KEY=$(get_key)
+    SVC_STATUS=$(systemctl is-active satset-node 2>/dev/null || echo "inactive")
+
+    if [ "$SVC_STATUS" = "active" ]; then
+        STATUS_BADGE="${green}ACTIVE (Running)${NC}"
+    else
+        STATUS_BADGE="${RED}INACTIVE (Stopped)${NC}"
+    fi
+
+    TOKEN="satset-node://${HOST}:${PORT}#key=${KEY}"
+
+    echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+    echo -e "${Lime}     SATSET MULTI-NODE CLUSTER MANAGER    ${NC}"
+    echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+    echo -e "Status Agent  : ${STATUS_BADGE}"
+    echo -e "Host / Domain : ${CYAN}${HOST}${NC}"
+    echo -e "Port Agent    : ${CYAN}${PORT}${NC}"
+    if [ -n "$KEY" ]; then
+        echo -e "API Key       : ${BIYellow}${KEY:0:8}...${KEY: -6}${NC}"
+    else
+        echo -e "API Key       : ${RED}(Belum Dibuat)${NC}"
+    fi
+    echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+    echo -e "${ungu}[${BIWhite}01${ungu}] ${NC}${BIWhite}Tampilkan / Salin Token Koneksi Node${NC}"
+    echo -e "${ungu}[${BIWhite}02${ungu}] ${NC}${BIWhite}Cek Live Log Service satset-node${NC}"
+    echo -e "${ungu}[${BIWhite}03${ungu}] ${NC}${BIWhite}Restart Service satset-node${NC}"
+    echo -e "${ungu}[${BIWhite}04${ungu}] ${NC}${BIWhite}Reset / Generate API Key Baru${NC}"
+    echo -e "${ungu}[${BIWhite}05${ungu}] ${NC}${BIWhite}Ubah Port satset-node (Default: 9090)${NC}"
+    echo -e "${ungu}[${BIWhite}06${ungu}] ${NC}${BIWhite}Cek Daftar Node Terhubung (Master VPS)${NC}"
+    echo -e "${ungu}[${BIWhite}07${ungu}] ${NC}${BIWhite}Uji Tes Latensi Semua Node${NC}"
+    echo -e "${ungu}[${BIWhite}00${ungu}] ${NC}${BIWhite}Kembali ke Menu Sebelumnya${NC}"
+    echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+    echo -ne "${CYAN}Pilih opsi [00-07]: ${NC}"
+    read -r opt
+
+    case "$opt" in
+        1|01)
+            clear
+            echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+            echo -e "${Lime}        TOKEN KONEKSI NODE CABANG         ${NC}"
+            echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+            echo -e "Silakan copy token berikut dan paste ke"
+            echo -e "menu Telegram Bot Store Master VPS Anda:"
+            echo ""
+            echo -e "${BIYellow}${TOKEN}${NC}"
+            echo ""
+            echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+            read -rp "Tekan [Enter] untuk kembali..."
+            ;;
+        2|02)
+            clear
+            echo -e "${CYAN}Menampilkan 50 log terakhir satset-node (Ctrl+C untuk keluar)...${NC}"
+            journalctl -u satset-node -n 50 -f
+            ;;
+        3|03)
+            echo -e "${BIYellow}Merestart satset-node.service...${NC}"
+            systemctl restart satset-node 2>/dev/null || true
+            sleep 1
+            echo -e "${green}Service satset-node berhasil direstart!${NC}"
+            sleep 1.5
+            ;;
+        4|04)
+            clear
+            echo -e "${RED}⚠️  PERINGATAN: Mereset API Key akan memutuskan koneksi${NC}"
+            echo -e "Master VPS sampai token baru dipaste kembali ke Master."
+            read -rp "Yakin ingin membuat API Key baru? [y/N]: " confirm
+            if [[ "$confirm" =~ ^[yY]$ ]]; then
+                NEW_KEY=$(python3 -c "import secrets; print(secrets.token_hex(24))")
+                mkdir -p /etc/satset
+                echo "$NEW_KEY" > "$KEY_FILE"
+                chmod 600 "$KEY_FILE"
+                systemctl restart satset-node 2>/dev/null || true
+                echo -e "${green}API Key baru berhasil dibuat!${NC}"
+                echo -e "Token baru: ${BIYellow}satset-node://${HOST}:${PORT}#key=${NEW_KEY}${NC}"
+                read -rp "Tekan [Enter] untuk kembali..."
+            fi
+            ;;
+        5|05)
+            clear
+            echo -e "Port saat ini: ${CYAN}${PORT}${NC}"
+            read -rp "Masukkan port baru untuk satset-node (contoh: 9090): " new_p
+            if [[ "$new_p" =~ ^[0-9]+$ ]] && [ "$new_p" -ge 1 ] && [ "$new_p" -le 65535 ]; then
+                mkdir -p /etc/satset
+                echo "PORT=$new_p" > "$CONF_FILE"
+                systemctl restart satset-node 2>/dev/null || true
+                echo -e "${green}Port berhasil diubah menjadi ${new_p}!${NC}"
+            else
+                echo -e "${RED}Port tidak valid!${NC}"
+            fi
+            sleep 2
+            ;;
+        6|06)
+            clear
+            echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+            echo -e "${Lime}     DAFTAR SERVER NODE TERHUBUNG         ${NC}"
+            echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+            python3 -c "
+import sys
+for p in ['/etc/satset/bot-store', 'bot-store']:
+    if p not in sys.path:
+        sys.path.append(p)
+try:
+    import database
+    nodes = database.get_all_nodes()
+    print('👑 Master VPS (127.0.0.1)')
+    if not nodes:
+        print('  Belum ada VPS cabang yang ditambahkan ke Master.')
+    for n in nodes:
+        status = 'Aktif' if n.get('is_active') else 'Nonaktif'
+        print(f\"{n.get('flag', '🌐')} #{n['id']} {n['name']} ({n['host']}:{n['port']}) - [{status}]\")
+except Exception as e:
+    print(f'Gagal memuat database node: {e}')
+"
+            echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+            read -rp "Tekan [Enter] untuk kembali..."
+            ;;
+        7|07)
+            clear
+            echo -e "${BIYellow}Menguji latensi dan status seluruh node...${NC}\n"
+            python3 -c "
+import sys
+for p in ['/etc/satset/bot-store', 'bot-store']:
+    if p not in sys.path:
+        sys.path.append(p)
+try:
+    import node_client
+    summary = node_client.get_all_nodes_summary()
+    for s in summary:
+        icon = '🟢' if s['is_online'] else '🔴'
+        st = f\"{s['ping_ms']} ms\" if s['is_online'] else 'Offline'
+        print(f\"{icon} {s['flag']} {s['name']} - Latency: {st} | CPU: {s['cpu_percent']}% | RAM: {s['ram_percent']}%\")
+except Exception as e:
+    print(f'Error pengujian node: {e}')
+"
+            echo ""
+            read -rp "Tekan [Enter] untuk kembali..."
+            ;;
+        0|00|x|X)
+            clear
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Pilihan tidak valid!${NC}"
+            sleep 1
+            ;;
+    esac
+done

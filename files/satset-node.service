@@ -1,0 +1,16 @@
+[Unit]
+Description=SATSET Node Agent Daemon (Multi-VPS Cluster)
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/etc/satset
+ExecStart=/usr/bin/python3 /usr/local/bin/satset-node run
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

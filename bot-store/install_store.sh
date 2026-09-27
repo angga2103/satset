@@ -42,6 +42,7 @@ BOT_FILES=(
     "pakasir.py"
     "xray_manager.py"
     "payg_worker.py"
+    "node_client.py"
     "bot.py"
     "requirements.txt"
     "satset-bot.service"

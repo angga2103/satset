@@ -51,11 +51,12 @@ echo -e "${ungu}[${BIWhite}08${ungu}] ${NC}${BIWhite}Info Port${NC}"
 echo -e "${ungu}[${BIWhite}09${ungu}] ${NC}${BIWhite}Rebuild VPS${NC}"
 echo -e "${ungu}[${BIWhite}10${ungu}] ${NC}${BIWhite}Status TCP BBR & Anti-DDoS${NC}"
 echo -e "${ungu}[${BIWhite}11${ungu}] ${NC}${BIWhite}Status BadVPN UDPGW (Gaming)${NC}"
+echo -e "${ungu}[${BIWhite}12${ungu}] ${NC}${BIWhite}Multi-Node Cluster / Node Agent${NC}"
 echo -e "${BIWhite}──────────────────────────────────────${NC}"
 echo -e "${Lime}Input x atau 0 untuk kembali ke Menu Utama${NC}"
 echo -e "${BIWhite}──────────────────────────────────────${NC}"
 echo ""
-echo -ne "\033[1;36mSelect menu [01-11] or [x]: \033[0m"
+echo -ne "\033[1;36mSelect menu [01-12] or [x]: \033[0m"
 read -r opt
 echo -e ""
 case $opt in
@@ -70,6 +71,7 @@ case $opt in
 9|09) clear ; m-rebuild ;;
 10|10) clear ; bbr ; m-setting ;;
 11|11) clear ; badvpn ; m-setting ;;
+12|12) clear ; m-node ; m-setting ;;
 0|00) clear ; menu ; exit ;;
 x|X) menu ;;
 *) echo "Pilihan tidak valid." ; sleep 1 ; m-setting ;;

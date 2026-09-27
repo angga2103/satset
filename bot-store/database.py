@@ -82,13 +82,31 @@ def init_db():
         ("ip_limit", "INTEGER DEFAULT 1"),
         ("locked_until", "TEXT"),
         ("lock_reason", "TEXT"),
-        ("price_paid", "INTEGER DEFAULT 0")
+        ("price_paid", "INTEGER DEFAULT 0"),
+        ("node_id", "INTEGER DEFAULT 0")
     ]:
         try:
             c.execute(f"ALTER TABLE vpn_accounts ADD COLUMN {col} {col_def}")
         except Exception:
             pass
             
+    # Table: Server Nodes (Multi-VPS Cluster)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS nodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        host TEXT NOT NULL,
+        port INTEGER DEFAULT 9090,
+        api_key TEXT NOT NULL,
+        flag TEXT DEFAULT '🌐',
+        is_active INTEGER DEFAULT 1,
+        last_ping_ms INTEGER DEFAULT 0,
+        last_seen TEXT,
+        system_info TEXT,
+        created_at TEXT
+    )
+    """)
+
     # Fix existing PAYG accounts: exp_date must be 'PAYG' rather than fixed date
     try:
         c.execute("UPDATE vpn_accounts SET exp_date = 'PAYG' WHERE plan_type = 'payg' AND (exp_date != 'PAYG' OR exp_date IS NULL)")
@@ -241,21 +259,27 @@ def complete_transaction(order_id: str):
     conn.close()
     return dict(tx) if tx else None
 
-def add_vpn_account(user_id: int, protocol: str, vpn_username: str, uuid: str, plan_type: str, exp_date: str, config_link: str, quota_gb: int = 350, ip_limit: int = 1, price_paid: int = 0):
+def add_vpn_account(user_id: int, protocol: str, vpn_username: str, uuid: str, plan_type: str, exp_date: str, config_link: str, quota_gb: int = 350, ip_limit: int = 1, price_paid: int = 0, node_id: int = 0):
     conn = get_connection()
     c = conn.cursor()
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute("""
-    INSERT INTO vpn_accounts (user_id, protocol, vpn_username, uuid, plan_type, exp_date, config_link, status, quota_gb, ip_limit, price_paid, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
-    """, (user_id, protocol, vpn_username, uuid, plan_type, exp_date, config_link, quota_gb, ip_limit, price_paid, now))
+    INSERT INTO vpn_accounts (user_id, protocol, vpn_username, uuid, plan_type, exp_date, config_link, status, quota_gb, ip_limit, price_paid, node_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
+    """, (user_id, protocol, vpn_username, uuid, plan_type, exp_date, config_link, quota_gb, ip_limit, price_paid, node_id, now))
     conn.commit()
     conn.close()
 
 def get_user_vpn_accounts(user_id: int):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT * FROM vpn_accounts WHERE user_id = ? ORDER BY id DESC", (user_id,))
+    c.execute("""
+        SELECT v.*, COALESCE(n.name, 'Master VPS') as node_name, COALESCE(n.flag, '🇮🇩') as node_flag, COALESCE(n.host, '') as node_host
+        FROM vpn_accounts v
+        LEFT JOIN nodes n ON v.node_id = n.id
+        WHERE v.user_id = ?
+        ORDER BY v.id DESC
+    """, (user_id,))
     rows = c.fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -325,9 +349,11 @@ def get_account_by_username(vpn_username: str):
     conn = get_connection()
     c = conn.cursor()
     c.execute("""
-        SELECT v.*, u.username as tg_username, u.first_name as tg_first_name, u.balance
+        SELECT v.*, u.username as tg_username, u.first_name as tg_first_name, u.balance,
+               COALESCE(n.name, 'Master VPS') as node_name, COALESCE(n.flag, '🇮🇩') as node_flag, COALESCE(n.host, '') as node_host
         FROM vpn_accounts v
         LEFT JOIN users u ON v.user_id = u.user_id
+        LEFT JOIN nodes n ON v.node_id = n.id
         WHERE v.vpn_username = ?
     """, (vpn_username,))
     row = c.fetchone()
@@ -385,9 +411,11 @@ def get_all_vpn_accounts_detailed(limit: int = 100):
     conn = get_connection()
     c = conn.cursor()
     c.execute("""
-        SELECT v.*, u.username as tg_username, u.first_name as tg_first_name, u.balance
+        SELECT v.*, u.username as tg_username, u.first_name as tg_first_name, u.balance,
+               COALESCE(n.name, 'Master VPS') as node_name, COALESCE(n.flag, '🇮🇩') as node_flag, COALESCE(n.host, '') as node_host
         FROM vpn_accounts v
         LEFT JOIN users u ON v.user_id = u.user_id
+        LEFT JOIN nodes n ON v.node_id = n.id
         ORDER BY v.id DESC
         LIMIT ?
     """, (limit,))
@@ -399,9 +427,11 @@ def get_vpn_account_by_id(acc_id: int):
     conn = get_connection()
     c = conn.cursor()
     c.execute("""
-        SELECT v.*, u.username as tg_username, u.first_name as tg_first_name, u.balance
+        SELECT v.*, u.username as tg_username, u.first_name as tg_first_name, u.balance,
+               COALESCE(n.name, 'Master VPS') as node_name, COALESCE(n.flag, '🇮🇩') as node_flag, COALESCE(n.host, '') as node_host
         FROM vpn_accounts v
         LEFT JOIN users u ON v.user_id = u.user_id
+        LEFT JOIN nodes n ON v.node_id = n.id
         WHERE v.id = ?
     """, (acc_id,))
     row = c.fetchone()
@@ -469,6 +499,116 @@ def record_purchase_transaction(user_id: int, amount: int, description: str = "r
     conn.close()
     return order_id
 
+# --- Server Node Management (Multi-VPS Cluster) ---
+
+def add_node(name: str, host: str, port: int = 9090, api_key: str = "", flag: str = "🌐") -> int:
+    conn = get_connection()
+    c = conn.cursor()
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute("""
+    INSERT INTO nodes (name, host, port, api_key, flag, is_active, last_ping_ms, last_seen, created_at)
+    VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)
+    """, (name, host, port, api_key, flag, now, now))
+    node_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return node_id
+
+def get_all_nodes() -> list:
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM nodes ORDER BY id ASC")
+    rows = c.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_active_nodes() -> list:
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM nodes WHERE is_active = 1 ORDER BY id ASC")
+    rows = c.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_node_by_id(node_id: int):
+    if node_id == 0:
+        return {
+            "id": 0,
+            "name": "Master VPS",
+            "host": "127.0.0.1",
+            "port": 9090,
+            "api_key": "",
+            "flag": "👑",
+            "is_active": 1,
+            "last_ping_ms": 0,
+            "last_seen": "online"
+        }
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM nodes WHERE id = ?", (node_id,))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def update_node_status(node_id: int, is_active: int = None, ping_ms: int = None, system_info: str = None):
+    conn = get_connection()
+    c = conn.cursor()
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    updates = ["last_seen = ?"]
+    params = [now]
+
+    if is_active is not None:
+        updates.append("is_active = ?")
+        params.append(is_active)
+    if ping_ms is not None:
+        updates.append("last_ping_ms = ?")
+        params.append(ping_ms)
+    if system_info is not None:
+        updates.append("system_info = ?")
+        params.append(system_info)
+
+    params.append(node_id)
+    c.execute(f"UPDATE nodes SET {', '.join(updates)} WHERE id = ?", tuple(params))
+    conn.commit()
+    conn.close()
+
+def update_node_info(node_id: int, name: str = None, flag: str = None, host: str = None, port: int = None, api_key: str = None):
+    conn = get_connection()
+    c = conn.cursor()
+    updates = []
+    params = []
+    if name is not None:
+        updates.append("name = ?")
+        params.append(name)
+    if flag is not None:
+        updates.append("flag = ?")
+        params.append(flag)
+    if host is not None:
+        updates.append("host = ?")
+        params.append(host)
+    if port is not None:
+        updates.append("port = ?")
+        params.append(port)
+    if api_key is not None:
+        updates.append("api_key = ?")
+        params.append(api_key)
+
+    if updates:
+        params.append(node_id)
+        c.execute(f"UPDATE nodes SET {', '.join(updates)} WHERE id = ?", tuple(params))
+        conn.commit()
+    conn.close()
+
+def delete_node(node_id: int):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
+    # Reassign orphaned accounts back to Master node (0)
+    c.execute("UPDATE vpn_accounts SET node_id = 0 WHERE node_id = ?", (node_id,))
+    conn.commit()
+    conn.close()
+
 # Initialize tables when imported
 init_db()
+
 

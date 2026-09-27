@@ -665,6 +665,8 @@ systemctl enable --now netfilter-persistent
 systemctl enable --now fail2ban
 systemctl enable --now badvpn-udpgw@7100 badvpn-udpgw@7200 badvpn-udpgw@7300 >/dev/null 2>&1 || true
 systemctl restart badvpn-udpgw@7100 badvpn-udpgw@7200 badvpn-udpgw@7300 >/dev/null 2>&1 || true
+systemctl enable --now satset-node >/dev/null 2>&1 || true
+systemctl restart satset-node >/dev/null 2>&1 || true
 history -c
 echo "unset HISTFILE" >> /etc/profile
 cd
@@ -690,10 +692,18 @@ function memasang_menu(){
     wget -q -O /etc/satset/bot-store/xray_manager.py "${REPO}bot-store/xray_manager.py" || true
     wget -q -O /etc/satset/bot-store/payg_worker.py "${REPO}bot-store/payg_worker.py" || true
     wget -q -O /etc/satset/bot-store/bot.py "${REPO}bot-store/bot.py" || true
+    wget -q -O /etc/satset/bot-store/node_client.py "${REPO}bot-store/node_client.py" || true
     wget -q -O /etc/satset/bot-store/requirements.txt "${REPO}bot-store/requirements.txt" || true
     wget -q -O /etc/satset/bot-store/satset-bot.service "${REPO}bot-store/satset-bot.service" || true
     wget -q -O /etc/satset/bot-store/install_store.sh "${REPO}bot-store/install_store.sh" || true
     chmod +x /etc/satset/bot-store/install_store.sh 2>/dev/null || true
+
+    # Pasang SatSet Node Agent (Multi-VPS Cluster Engine)
+    wget -q -O /usr/local/bin/satset-node "${REPO}files/satset-node.py" || true
+    chmod +x /usr/local/bin/satset-node 2>/dev/null || true
+    ln -sf /usr/local/bin/satset-node /usr/bin/satset-node 2>/dev/null || true
+    wget -q -O /etc/systemd/system/satset-node.service "${REPO}files/satset-node.service" || true
+
     print_success "Menu"
 }
 function memasang_profile(){
@@ -909,5 +919,16 @@ rm -rf /root/menu /root/*.zip /root/LICENSE /root/README.md /root/setup.sh /root
 clear
 secs_to_human "$(($(date +%s) - ${start}))"
 echo -e "${BIWhite}Script Successfully Installed${NC}"
+if [ -x /usr/local/bin/satset-node ]; then
+    echo ""
+    echo -e "${ungu}====================================================${NC}"
+    echo -e "${Green}      NODE CLUSTER CONNECTION TOKEN (MULTI-VPS)     ${NC}"
+    echo -e "${ungu}====================================================${NC}"
+    /usr/local/bin/satset-node token 2>/dev/null || true
+    echo -e "${ungu}====================================================${NC}"
+    echo -e "${BIWhite}Salin token di atas dan masukkan di Master VPS / Bot Store${NC}"
+    echo -e "${BIWhite}untuk menghubungkan VPS ini ke cluster multi-server.${NC}"
+    echo ""
+fi
 read -p "$( echo -e "${BIYellow}Press ${BIWhite}[ ${NC}${ungu}Enter${NC} ${BIWhite}]${BIYellow} For reboot${NC}") "
 reboot

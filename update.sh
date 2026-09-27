@@ -296,7 +296,7 @@ chmod +x /usr/local/sbin/bot-store 2>/dev/null || true
 
 mkdir -p /etc/satset/bot-store
 CACHE_BUSTER="?v=$(date +%s)"
-BOT_FILES=(config.py database.py pakasir.py xray_manager.py payg_worker.py bot.py requirements.txt satset-bot.service install_store.sh xray_patcher.py)
+BOT_FILES=(config.py database.py pakasir.py xray_manager.py payg_worker.py bot.py requirements.txt satset-bot.service install_store.sh xray_patcher.py node_client.py)
 for f in "${BOT_FILES[@]}"; do
     wget -q -O "/etc/satset/bot-store/$f" "$REPO_RAW/bot-store/$f${CACHE_BUSTER}" 2>/dev/null || \
     curl -fsSL -o "/etc/satset/bot-store/$f" "$REPO_RAW/bot-store/$f${CACHE_BUSTER}" 2>/dev/null || true
@@ -305,6 +305,19 @@ chmod +x /etc/satset/bot-store/install_store.sh 2>/dev/null || true
 chmod +x /etc/satset/bot-store/xray_patcher.py 2>/dev/null || true
 python3 /etc/satset/bot-store/xray_patcher.py >/dev/null 2>&1 || true
 systemctl restart xray 2>/dev/null || true
+
+# Pasang SatSet Node Agent (Multi-VPS Cluster Engine)
+wget -q -O /usr/local/bin/satset-node "$REPO_RAW/files/satset-node.py${CACHE_BUSTER}" 2>/dev/null || \
+curl -fsSL -o /usr/local/bin/satset-node "$REPO_RAW/files/satset-node.py${CACHE_BUSTER}" 2>/dev/null || true
+chmod +x /usr/local/bin/satset-node 2>/dev/null || true
+ln -sf /usr/local/bin/satset-node /usr/bin/satset-node 2>/dev/null || true
+
+wget -q -O /etc/systemd/system/satset-node.service "$REPO_RAW/files/satset-node.service${CACHE_BUSTER}" 2>/dev/null || \
+curl -fsSL -o /etc/systemd/system/satset-node.service "$REPO_RAW/files/satset-node.service${CACHE_BUSTER}" 2>/dev/null || true
+
+systemctl daemon-reload 2>/dev/null || true
+systemctl enable satset-node 2>/dev/null || true
+systemctl restart satset-node 2>/dev/null || true
 
 if [ -x /etc/satset/venv/bin/pip ]; then
     /etc/satset/venv/bin/pip install -q -r /etc/satset/bot-store/requirements.txt 2>/dev/null || true
@@ -374,5 +387,16 @@ ok "Menu & Bot Store OK"
 # FINAL
 ############################################
 systemctl daemon-reload
-systemctl enable --now nginx xray cron vnstat dropbear ws-stunnel badvpn-udpgw@7100 badvpn-udpgw@7200 badvpn-udpgw@7300
+systemctl enable --now nginx xray cron vnstat dropbear ws-stunnel badvpn-udpgw@7100 badvpn-udpgw@7200 badvpn-udpgw@7300 satset-node
+if [ -x /usr/local/bin/satset-node ]; then
+    echo ""
+    echo -e "\e[1;36m====================================================\e[0m"
+    echo -e "\e[1;32m      NODE CLUSTER CONNECTION TOKEN (MULTI-VPS)     \e[0m"
+    echo -e "\e[1;36m====================================================\e[0m"
+    /usr/local/bin/satset-node token 2>/dev/null || true
+    echo -e "\e[1;36m====================================================\e[0m"
+    echo -e "Salin token di atas dan masukkan di Master VPS / Bot Store"
+    echo -e "untuk menghubungkan VPS ini ke cluster multi-server."
+    echo ""
+fi
 ok "SETUP SELESAI — Reboot disarankan"
