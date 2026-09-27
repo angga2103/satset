@@ -1,6 +1,6 @@
-# ⚡ SATSET - Automated Xray Multi-Protocol VPN Tunneling Stack
+# ⚡ SATSET - Automated Xray Multi-Protocol VPN Tunneling Stack & Multi-VPS Cluster
 
-Skrip otomatisasi instalasi dan manajemen layanan tunneling Xray-core multi-protokol berkinerja tinggi untuk server VPS Debian dan Ubuntu. Dilengkapi dengan manajemen limit kuota, deteksi multi-login auto-lock, bot Telegram, integrasi Nginx reverse proxy, dan panel kontrol berbasis teks (CLI).
+Skrip otomatisasi instalasi dan manajemen layanan tunneling Xray-core multi-protokol berkinerja tinggi untuk server VPS Debian dan Ubuntu. Dilengkapi dengan arsitektur **Multi-VPS Cluster (Master-Cabang)**, manajemen limit kuota, deteksi multi-login auto-lock, bot Telegram Store terintegrasi QRIS Pakasir & PAYG harian, Nginx reverse proxy terpadu, dan panel kontrol CLI modern.
 
 ---
 
@@ -18,6 +18,87 @@ apt update -y && apt install -y curl wget screen && screen -S setup-session bash
 > ```bash
 > screen -r setup-session
 > ```
+
+---
+
+## 🌐 Arsitektur Multi-VPS Cluster (Master & Cabang)
+
+SATSET kini mendukung pengelolaan **banyak VPS sekaligus (Multi-Server Cluster)** di bawah satu kendali VPS Master atau Bot Telegram Store:
+
+```
+                  ┌─────────────────────────────────────────┐
+                  │          👑 VPS MASTER PUSAT            │
+                  │   - Dashboard CLI (m-node)              │
+                  │   - Database Global & PAYG Worker       │
+                  │   - SATSET Bot Telegram Store           │
+                  └───────────────┬─────────────────────────┘
+                                  │
+          Bidirectional Handshake │ (REST API Daemon Port 9090)
+                                  │
+     ┌────────────────────────────┼────────────────────────────┐
+     ▼                            ▼                            ▼
+┌────────────────────────┐  ┌────────────────────────┐  ┌────────────────────────┐
+│   🌐 VPS CABANG #1     │  │   🌐 VPS CABANG #2     │  │   🌐 VPS CABANG #3     │
+│   🇸🇬 Singapore Node    │  │   🇯🇵 Tokyo Node        │  │   🇮🇩 Jakarta Node      │
+│   satset-node daemon   │  │   satset-node daemon   │  │   satset-node daemon   │
+└────────────────────────┘  └────────────────────────┘  └────────────────────────┘
+```
+
+### 🌟 Keunggulan Multi-VPS Cluster:
+1. **Pemilihan Lokasi Server di Bot Telegram**:
+   - Pengguna bot dapat memilih server tujuan saat membeli akun (misal: 🇮🇩 Indonesia, 🇸🇬 Singapura, 🇯🇵 Tokyo, 🇺🇸 US, dll).
+   - Pembuatan akun otomatis diteruskan ke VPS cabang yang dipilih tanpa membebani server utama.
+2. **Koneksi Cepat Menggunakan Token & Handshake 2 Arah**:
+   - Cukup salin token koneksi dari VPS cabang format `satset-node://domain:port#key=...`.
+   - Master dan Cabang melakukan handshake dua arah otomatis untuk memvalidasi kunci keamanan dan mendaftarkan identitas Master.
+3. **Proteksi Role Mutex Otomatis**:
+   - **VPS Master**: Bertindak sebagai pusat kendali, memantau latency (ping ms), kesehatan layanan, dan bebas menambahkan node cabang.
+   - **VPS Cabang**: Terkunci sebagai *Worker Node* yang menginduk ke domain Master. Fitur input token cabang lain otomatis dikunci untuk mencegah anomali siklus (*circular master*).
+   - **Standalone**: Status default sebelum dihubungkan, bebas diatur sebagai Master maupun Cabang.
+4. **Remote Management dari Master**:
+   - Master dapat merestart layanan (Xray, SSH, Dropbear, Nginx, BadVPN), membersihkan RAM cache, flush log, dan memeriksa sesi aktif di seluruh VPS cabang secara terpusat.
+5. **Multi-Node PAYG & Anti Multi-Login**:
+   - Sistem autodebet harian PAYG (Pay-As-You-Go) memantau saldo pengguna dan menghapus akun di server cabang secara tepat jika saldo habis.
+   - Pemeriksaan multi-login memantau sesi aktif di seluruh cluster secara real-time dan menerapkan suspensi otomatis jika batas IP terlampaui.
+
+---
+
+## 📖 Panduan Menghubungkan VPS Cabang ke Master
+
+### Langkah 1: Pasang Skrip di VPS Cabang
+Install skrip di VPS Cabang menggunakan *One-Line Installer* seperti biasa. Pada akhir instalasi, layar ringkasan akan menampilkan **Token Koneksi Multi-VPS** Anda.
+
+### Langkah 2: Salin Token dari VPS Cabang
+Jika Anda ingin melihat token kapan saja di VPS Cabang, jalankan perintah:
+```bash
+m-node
+```
+Pilih opsi `[02]` / `[05]` (**Tampilkan Token & API Key VPS Ini**), atau langsung ketik di terminal:
+```bash
+satset-node token
+```
+Contoh token: `satset-node://sg1.domainanda.com:9090#key=a1b2c3d4e5...`
+
+### Langkah 3: Hubungkan ke Master VPS
+
+Anda memiliki 2 cara mudah untuk menghubungkan cabang ke Master:
+
+#### Cara A: Melalui Bot Telegram Store (Rekomendasi)
+1. Buka Bot Telegram Store Anda sebagai Admin, ketik `/admin`.
+2. Klik tombol **🌐 Kelola Server Node**.
+3. Klik tombol **➕ Tambah Server Node**.
+4. Paste token koneksi yang telah disalin.
+5. Selesai! Bot akan melakukan handshake dan server langsung aktif sebagai opsi lokasi saat membuat akun VPN.
+
+#### Cara B: Melalui Terminal CLI Master
+1. Login SSH ke VPS Master Anda, lalu ketik:
+   ```bash
+   m-node
+   ```
+2. Pilih menu `[01]` (**Hubungkan VPS Cabang Baru**).
+3. Masukkan nama server (misal: `Singapura VIP`) dan bendera emoji (misal: `🇸🇬`).
+4. Paste token koneksi node cabang.
+5. Sistem akan menguji koneksi, menjalankan handshake, dan mendaftarkan server ke cluster.
 
 ---
 
@@ -58,6 +139,7 @@ chmod +x setup.sh
 | **Trojan** | WebSocket (WS) & gRPC | 443, 444, 8443, 2053, 2083, 2087, 2096 | - |
 | **Shadowsocks** | WebSocket (WS) & gRPC | 443, 444, 8443, 2053, 2083, 2087, 2096 | 80, 8080, 8880, 2052, 2082, 2086, 2095 |
 | **BadVPN / UDP-GW**| UDP Tunnel (Gaming/VoIP) | - | 7100, 7200, 7300 |
+| **SATSET Node API**| REST API Daemon (Cluster) | - | 9090 |
 | **Web Server** | Nginx Direct (Web Page) | 81 (SSL) | - |
 
 ---
@@ -84,13 +166,15 @@ chmod +x setup.sh
 
 ## ✨ Fitur Utama
 
+- **Multi-VPS Cluster**: Hubungkan VPS cabang tanpa batas ke satu Master VPS dan Bot Telegram.
 - **Multi-Protokol Lengkap**: Mendukung SSH Tunneling, Dropbear, Stunnel SSL, SSH WebSocket, VMess, VLess, Trojan, dan Shadowsocks.
 - **WebSocket SSH Terintegrasi**: Menggunakan daemon `ws-stunnel` berkecepatan tinggi yang kompatibel penuh dengan HTTP Custom, HTTP Injector, OpenTunnel, NetMod, dll.
 - **Core Modern**: Menggunakan Xray-core v25.x dengan dukungan protokol TLS 1.3, multiplexing, dan gRPC stream.
 - **Nginx Reverse Proxy Terpadu**: Pemisahan jalur path WebSocket (`/`, `/vmess`, `/vless`, `/trojan-ws`, `/ss-ws`) dan gRPC service name yang aman dan teruji.
 - **Auto SSL & Fallback Resilient**: Ditenagai oleh `acme.sh` resmi dengan penyedia Let's Encrypt, serta *self-signed fallback* darurat agar layanan web dan proxy tidak pernah *crash* saat DNS domain masih masa propagasi.
-- **Pembatasan Kuota & IP Real-time**: Service otomatis per menit untuk memantau pemakaian kuota dan mengunci akun pengguna yang melebihi batas login (*anti multi-login*).
-- **Notifikasi Bot Telegram**: Notifikasi instan ke grup/channel admin ketika ada pengguna yang terkunci, masa aktif habis, atau limit kuota tercapai.
+- **Cloudflare WARP Tunnel (`m-warp`)**: Integrasi Cloudflare WARP resmi untuk membuka blokir situs dan akses IPv4/IPv6 outbound bersih.
+- **Pembatasan Kuota & IP Real-time**: Service otomatis per menit untuk memantau pemakaian kuota dan mengunci akun pengguna yang melebihi batas login (*anti multi-login* lintas cluster).
+- **Notifikasi Bot Telegram**: Notifikasi instan ke admin ketika ada pengguna yang terkunci, masa aktif habis, atau limit kuota tercapai.
 - **Pengoptimalan Jaringan BBR & TCP**: Sysctl kernel tuning teroptimasi untuk latensi rendah (*low latency*) dan *throughput* tinggi.
 - **CLI Dashboard Cepat**: Cukup ketik `menu` di terminal untuk mengakses semua fitur manajemen akun dan server.
 
@@ -101,6 +185,8 @@ chmod +x setup.sh
 Ketik perintah berikut langsung di terminal VPS Anda:
 
 - `menu` : Membuka Menu Utama VPS
+- `m-node` : Kelola Multi-VPS Cluster & Node Cabang (Master, Cabang, Standalone)
+- `satset-node` : Daemon service & manajemen API Key VPS Cabang
 - `m-ssh` : Kelola Akun SSH & WebSocket (addssh, trialssh, renewssh, delssh, cekssh)
 - `addssh` : Buat Akun SSH & WebSocket Baru
 - `trialssh` : Buat Akun SSH Trial 1 Hari
@@ -111,10 +197,12 @@ Ketik perintah berikut langsung di terminal VPS Anda:
 - `m-vless` : Kelola Akun VLess
 - `m-trojan` : Kelola Akun Trojan
 - `m-shadowsocks` : Kelola Akun Shadowsocks
+- `m-warp` : Pengaturan Cloudflare WARP (Status, On/Off, Mode)
 - `m-bot` : Pengaturan Bot Telegram Notifikasi & SATSET Store Bot
 - `bot-store` : Panel CLI Manajemen Bot Store & PAYG
 - `m-domain` : Ganti Domain atau Perbarui Sertifikat SSL
 - `fixcert` : Memperbarui / Menerbitkan Ulang Sertifikat SSL Domain
+- `m-rebuild` : Reset & Rebuild Stack Instalasi
 - `speedtest` : Menjalankan Pengujian Kecepatan Jaringan VPS
 - `running` / `restart` : Memeriksa Status & Memulai Ulang Semua Layanan
 
@@ -122,25 +210,29 @@ Ketik perintah berikut langsung di terminal VPS Anda:
 
 ## 🤖 SATSET Telegram Store Bot (QRIS Pakasir & PAYG)
 
-Repository ini dilengkapi dengan bot Telegram otomatis untuk jualan akun tunneling VPN yang terintegrasi langsung dengan payment gateway **Pakasir QRIS** dan sistem **Pay-As-You-Go (PAYG)**.
+Repository ini dilengkapi dengan bot Telegram otomatis untuk jualan akun tunneling VPN yang terintegrasi langsung dengan payment gateway **Pakasir QRIS**, sistem **Pay-As-You-Go (PAYG)**, dan **Multi-Server Selection**.
 
 ### ✨ Fitur Unggulan Bot:
-1. **Sistem Saldo & Top Up Instan (QRIS Real-Time)**:
+1. **Dukungan Multi-Server (Pilih Lokasi VPS)**:
+   - Pembeli dapat memilih lokasi server yang diinginkan (🇮🇩 Indonesia Master, 🇸🇬 Singapore Cabang, dll).
+   - Menampilkan status ping latency dan ketersediaan server secara transparan.
+2. **Sistem Saldo & Top Up Instan (QRIS Real-Time)**:
    - Pengguna dapat mengisi saldo kapan saja secara instan.
    - Menggunakan gateway **Pakasir**: barcode QRIS dinamis dibuat otomatis dan dapat dibayar menggunakan seluruh bank (BCA, BRI, BNI, Mandiri) dan e-wallet (GoPay, OVO, DANA, ShopeePay, LinkAja).
    - Verifikasi otomatis ganda: background worker mendeteksi pembayaran sukses dan langsung mengkredit saldo pengguna secara *real-time*.
-2. **Paket Bulanan Standar**:
-   - Pembelian akun 30 hari seharga **Rp 8.000 / akun**.
+3. **Paket Bulanan Standar**:
+   - Pembelian akun 30 hari seharga **Rp 8.000 / akun** (harga dapat diubah via `/admin` atau `bot-store`).
    - Mendukung 5 protokol: **SSH & WebSocket**, **VMess**, **VLess**, **Trojan**, dan **Shadowsocks**.
-   - Auto-create akun langsung di server dan mengirimkan detail akun (host, port, user, pass, payload) serta link config siap pakai.
-3. **Fitur Pay-As-You-Go (PAYG)**:
+   - Auto-create akun langsung di server tujuan dan mengirimkan detail akun serta link config siap pakai.
+4. **Fitur Pay-As-You-Go (PAYG)**:
    - Skema fleksibel tanpa komitmen sebulan: pengguna hanya membayar harian sebesar **Rp 300 / hari**.
-   - Sistem melakukan auto-debet saldo secara otomatis setiap pergantian hari (00:00 WIB).
+   - Sistem melakukan auto-debet saldo secara otomatis setiap pergantian hari (00:00 WIB) di server lokal maupun cabang.
    - Jika saldo pengguna habis, bot otomatis menonaktifkan akun sementara dan memberi notifikasi ke pengguna untuk segera melakukan top up.
-4. **Trial Gratis 1 Hari**:
+5. **Trial Gratis 1 Hari**:
    - Fasilitas uji coba 24 jam gratis bagi pengguna baru (dibatasi 1x per ID Telegram).
-5. **Panel Admin & Mass Broadcast**:
-   - Admin dapat mengirimkan pesan broadcast ke seluruh pengguna bot dengan 1 kali klik.
+6. **Panel Admin & Mass Broadcast**:
+   - Menu manajemen Multi-VPS node langsung dari bot (Tambah/Hapus Cabang, Monitoring Ping, Restart Layanan).
+   - Kirim pesan broadcast ke seluruh pengguna bot dengan 1 kali klik.
    - Admin dapat menambahkan saldo pengguna secara manual (`/addsaldo <user_id> <jumlah>`).
    - Statistik live: total pengguna, total akun aktif, dan total omset pendapatan.
 
@@ -166,7 +258,17 @@ bot-store
 
 ## 🔧 Pemecahan Masalah (Troubleshooting)
 
-### 1. Sertifikat SSL Gagal Terbit
+### 1. Port 9090 / Gagal Terhubung ke VPS Cabang
+Pastikan firewall atau security group cloud provider (seperti AWS, GCP, DigitalOcean, Linode) membuka port **9090 TCP**. Cek status service di cabang:
+```bash
+systemctl status satset-node
+```
+Jika service belum aktif, jalankan:
+```bash
+systemctl restart satset-node
+```
+
+### 2. Sertifikat SSL Gagal Terbit
 Pastikan domain sudah terarah ke IP VPS dengan mengetik:
 ```bash
 ping namadomain.com
@@ -176,19 +278,20 @@ Jika IP sudah sesuai namun SSL belum aktif, perbarui sertifikat dengan:
 fixcert
 ```
 
-### 2. Memeriksa Status Layanan
+### 3. Memeriksa Status Layanan
 ```bash
 systemctl status xray
 systemctl status nginx
+systemctl status satset-node
 systemctl status fail2ban
 ```
 
-### 3. Menjalankan Update Skrip Terbaru
+### 4. Menjalankan Update Skrip Terbaru
 ```bash
 wget -q https://raw.githubusercontent.com/angga2103/satset/main/update.sh && chmod +x update.sh && ./update.sh
 ```
 
-### 4. Mirror Repositori Bermasalah (misal: `cermin.rumahweb.id`)
+### 5. Mirror Repositori Bermasalah (misal: `cermin.rumahweb.id`)
 Skrip instalasi sudah secara otomatis mendeteksi dan mengalihkan mirror bermasalah seperti `cermin.rumahweb.id` ke server mirror resmi Ubuntu/Debian. Jika Anda mengalami kegagalan saat menjalankan `apt update` manual sebelum instalasi, jalankan perintah ini:
 - **Untuk Ubuntu:**
   ```bash
