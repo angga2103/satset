@@ -15,13 +15,17 @@ import shutil
 import socket
 import threading
 import subprocess
+import re
 import urllib.request
 import urllib.error
-from http.server import HTTPServer, BaseHTTPRequestHandler
+try:
+    from http.server import ThreadingHTTPServer as HTTPServer, BaseHTTPRequestHandler
+except ImportError:
+    from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 # Base directories & file paths
-CONFIG_DIR = "/etc/satset"
+CONFIG_DIR = "/etc/satset" if (os.path.exists("/etc/satset") or os.name != "nt") else os.path.join(os.path.dirname(os.path.abspath(__file__)), ".satset")
 KEY_FILE = os.path.join(CONFIG_DIR, "node-key.txt")
 CONF_FILE = os.path.join(CONFIG_DIR, "node.conf")
 CLUSTER_FILE = os.path.join(CONFIG_DIR, "cluster.json")
@@ -573,11 +577,17 @@ class NodeRequestHandler(BaseHTTPRequestHandler):
             if secrets.compare_digest(token, expected_key):
                 return True
 
-        parsed = urlparse(self.path)
-        q = parse_qs(parsed.query)
-        if "key" in q and q["key"]:
-            if secrets.compare_digest(q["key"][0], expected_key):
-                return True
+        x_key = self.headers.get("X-API-Key", "").strip()
+        if x_key and secrets.compare_digest(x_key, expected_key):
+            return True
+
+        # Query param key hanya diizinkan untuk request read-only (GET)
+        if self.command == "GET":
+            parsed = urlparse(self.path)
+            q = parse_qs(parsed.query)
+            if "key" in q and q["key"]:
+                if secrets.compare_digest(q["key"][0], expected_key):
+                    return True
         return False
 
     def do_OPTIONS(self):
@@ -717,13 +727,17 @@ class NodeRequestHandler(BaseHTTPRequestHandler):
                 return
 
             protocol = payload.get("protocol", "vmess").lower()
-            username = payload.get("username", "")
+            username = payload.get("username", "").strip()
             days = int(payload.get("days", 30))
             quota_gb = payload.get("quota_gb")
             ip_limit = payload.get("ip_limit")
 
             if not username:
                 self.send_json({"status": "error", "message": "Username harus diisi"}, 400)
+                return
+
+            if not re.match(r'^[a-zA-Z0-9_]{3,32}$', username):
+                self.send_json({"status": "error", "message": "Format username tidak valid (hanya 3-32 alfanumerik / underscore)"}, 400)
                 return
 
             try:
@@ -738,7 +752,7 @@ class NodeRequestHandler(BaseHTTPRequestHandler):
                 return
 
             protocol = payload.get("protocol", "vmess").lower()
-            username = payload.get("username", "")
+            username = payload.get("username", "").strip()
             if not username:
                 self.send_json({"status": "error", "message": "Username harus diisi"}, 400)
                 return
@@ -755,7 +769,7 @@ class NodeRequestHandler(BaseHTTPRequestHandler):
                 return
 
             protocol = payload.get("protocol", "vmess").lower()
-            username = payload.get("username", "")
+            username = payload.get("username", "").strip()
             new_exp_date = payload.get("new_exp_date", "")
             user_uuid = payload.get("user_uuid")
 
@@ -774,11 +788,13 @@ class NodeRequestHandler(BaseHTTPRequestHandler):
                 self.send_json({"status": "error", "message": "Module xray_manager tidak ditemukan"}, 500)
                 return
 
-            username = payload.get("username", "")
+            username = payload.get("username", "").strip()
+            protocol = payload.get("protocol") or (xray_manager.detect_user_protocol(username) if hasattr(xray_manager, "detect_user_protocol") else "vmess")
+            duration_minutes = int(payload.get("duration_minutes", 10))
             reason = payload.get("reason", "admin_suspended")
             try:
-                xray_manager.suspend_account(username, reason=reason)
-                self.send_json({"status": "success", "message": f"Akun {username} berhasil disuspend"}, 200)
+                xray_manager.suspend_account(protocol, username, duration_minutes=duration_minutes, reason=reason)
+                self.send_json({"status": "success", "message": f"Akun {username} ({protocol}) berhasil disuspend"}, 200)
             except Exception as e:
                 self.send_json({"status": "error", "message": str(e)}, 500)
 
@@ -787,16 +803,22 @@ class NodeRequestHandler(BaseHTTPRequestHandler):
                 self.send_json({"status": "error", "message": "Module xray_manager tidak ditemukan"}, 500)
                 return
 
-            username = payload.get("username", "")
+            username = payload.get("username", "").strip()
+            protocol = payload.get("protocol") or (xray_manager.detect_user_protocol(username) if hasattr(xray_manager, "detect_user_protocol") else "vmess")
             try:
-                xray_manager.unsuspend_account(username)
-                self.send_json({"status": "success", "message": f"Akun {username} berhasil diaktifkan kembali"}, 200)
+                xray_manager.unsuspend_account(protocol, username)
+                self.send_json({"status": "success", "message": f"Akun {username} ({protocol}) berhasil diaktifkan kembali"}, 200)
             except Exception as e:
                 self.send_json({"status": "error", "message": str(e)}, 500)
 
         elif path == "/api/control/service":
             service = payload.get("service", "").lower()
             action = payload.get("action", "restart").lower()
+
+            VALID_ACTIONS = ["start", "stop", "restart", "reload", "status"]
+            if action not in VALID_ACTIONS:
+                self.send_json({"status": "error", "message": f"Aksi '{action}' tidak valid (pilih: {', '.join(VALID_ACTIONS)})"}, 400)
+                return
 
             cmds = []
             if service == "xray":
@@ -831,11 +853,12 @@ class NodeRequestHandler(BaseHTTPRequestHandler):
                 return
 
             success = True
-            for cmd in cmds:
-                try:
-                    subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10.0)
-                except Exception:
-                    success = False
+            if os.name != "nt":
+                for cmd in cmds:
+                    try:
+                        subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10.0)
+                    except Exception:
+                        success = False
 
             self.send_json({
                 "status": "success" if success else "warning",

@@ -476,6 +476,8 @@ def delete_ssh(username: str) -> bool:
 
 def create_account(protocol: str, username: str, days: int = 30, quota_gb: int = None, ip_limit: int = None) -> dict:
     protocol = protocol.lower()
+    if username_exists(username):
+        raise ValueError(f"Username '{username}' sudah digunakan di server.")
     cfg = load_config()
     if quota_gb is None:
         quota_gb = cfg.get("DEFAULT_QUOTA_GB", 350)
@@ -1098,6 +1100,10 @@ def sync_all_accounts() -> dict:
             proto = acc.get("protocol", "").lower()
             uname = acc.get("vpn_username")
             if not uname or uname in SYSTEM_USERS or uname.startswith("systemd-"):
+                continue
+
+            # Jangan kloning akun milik VPS cabang ke Master VPS!
+            if acc.get("node_id", 0) != 0:
                 continue
 
             if proto in ["ssh", "openssh", "dropbear"]:

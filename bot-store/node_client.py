@@ -179,14 +179,17 @@ def dispatch_local(endpoint: str, data: dict = None) -> dict:
         return {"status": "success", "renewed": ok}
 
     elif endpoint == "/api/account/suspend":
-        uname = data.get("username", "")
+        uname = data.get("username", "").strip()
+        proto = data.get("protocol") or (xray_manager.detect_user_protocol(uname) if hasattr(xray_manager, "detect_user_protocol") else "vmess")
+        duration = int(data.get("duration_minutes", 10))
         reason = data.get("reason", "admin_suspended")
-        xray_manager.suspend_account(uname, reason=reason)
+        xray_manager.suspend_account(proto, uname, duration_minutes=duration, reason=reason)
         return {"status": "success"}
 
     elif endpoint == "/api/account/unsuspend":
-        uname = data.get("username", "")
-        xray_manager.unsuspend_account(uname)
+        uname = data.get("username", "").strip()
+        proto = data.get("protocol") or (xray_manager.detect_user_protocol(uname) if hasattr(xray_manager, "detect_user_protocol") else "vmess")
+        xray_manager.unsuspend_account(proto, uname)
         return {"status": "success"}
 
     elif endpoint == "/api/control/service":
@@ -309,7 +312,7 @@ def request_node(node: dict, endpoint: str, method: str = "GET", data: dict = No
 # --- Connection Token Parser ---
 
 def parse_connection_token(raw: str) -> dict:
-    raw = raw.strip()
+    raw = raw.strip().strip("`'\"").strip()
     # Format 1: satset-node://host:port#key=xxx
     if raw.startswith("satset-node://"):
         cleaned = raw.replace("satset-node://", "")
@@ -505,23 +508,36 @@ def renew_account(node_id: int, protocol: str, username: str, new_exp_date: str,
     res = request_node(node, "/api/account/renew", method="POST", data=payload, timeout=10.0)
     return res.get("status") == "success"
 
-def suspend_account(node_id: int, username: str, reason: str = "admin_suspended") -> bool:
+def suspend_account(node_id: int, username: str, protocol: str = None, duration_minutes: int = 10, reason: str = "admin_suspended") -> bool:
+    if not protocol:
+        protocol = xray_manager.detect_user_protocol(username) if hasattr(xray_manager, "detect_user_protocol") else "vmess"
+        protocol = protocol or "vmess"
+
     node = database.get_node_by_id(node_id)
-    if not node:
-        xray_manager.suspend_account(username, reason)
+    if not node or int(node.get("id", 0)) == 0:
+        xray_manager.suspend_account(protocol, username, duration_minutes=duration_minutes, reason=reason)
         return True
 
-    payload = {"username": username, "reason": reason}
+    payload = {
+        "protocol": protocol,
+        "username": username,
+        "duration_minutes": duration_minutes,
+        "reason": reason
+    }
     res = request_node(node, "/api/account/suspend", method="POST", data=payload, timeout=10.0)
     return res.get("status") == "success"
 
-def unsuspend_account(node_id: int, username: str) -> bool:
+def unsuspend_account(node_id: int, username: str, protocol: str = None) -> bool:
+    if not protocol:
+        protocol = xray_manager.detect_user_protocol(username) if hasattr(xray_manager, "detect_user_protocol") else "vmess"
+        protocol = protocol or "vmess"
+
     node = database.get_node_by_id(node_id)
-    if not node:
-        xray_manager.unsuspend_account(username)
+    if not node or int(node.get("id", 0)) == 0:
+        xray_manager.unsuspend_account(protocol, username)
         return True
 
-    payload = {"username": username}
+    payload = {"protocol": protocol, "username": username}
     res = request_node(node, "/api/account/unsuspend", method="POST", data=payload, timeout=10.0)
     return res.get("status") == "success"
 

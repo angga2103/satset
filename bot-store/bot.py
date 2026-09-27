@@ -661,7 +661,7 @@ def callback_account_detail(call):
 
     node_flag = acc.get("node_flag") or "👑"
     node_name = acc.get("node_name") or "Master VPS"
-    domain = acc.get("node_host") or xray_manager.get_domain()
+    domain = acc.get("domain") or acc.get("node_host") or xray_manager.get_domain()
     proto = acc['protocol'].upper()
     uname = acc['vpn_username']
     pwd = acc['uuid']
@@ -2142,7 +2142,8 @@ def handle_text_inputs(message):
             return
         wait_msg = bot.send_message(user_id, "⏳ <i>Menguji koneksi & melakukan handshake ke server node cabang...</i>")
         try:
-            reg_res = node_client.register_node_with_handshake(text)
+            clean_token = text.strip().strip("`'\"").strip()
+            reg_res = node_client.register_node_with_handshake(clean_token)
             if reg_res.get("status") != "success":
                 err = reg_res.get("message", "Handshake gagal")
                 bot.edit_message_text(

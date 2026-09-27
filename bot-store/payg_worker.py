@@ -5,6 +5,7 @@ import threading
 import database
 import pakasir
 import xray_manager
+import node_client
 from config import load_config
 
 logger = logging.getLogger("payg_worker")
@@ -86,8 +87,10 @@ def process_payg_daily(bot=None):
         else:
             # Insufficient funds -> suspend account
             database.set_payg_status(sub_id, "suspended")
-            xray_manager.delete_account(proto, username)
-            logger.warning(f"User {user_id} insufficient funds for PAYG {username}, suspended.")
+            acc = database.get_account_by_username(username)
+            node_id = acc.get("node_id", 0) if acc else 0
+            node_client.delete_account(node_id, proto, username)
+            logger.warning(f"User {user_id} insufficient funds for PAYG {username} (node {node_id}), suspended.")
             if bot:
                 try:
                     text = (
@@ -120,6 +123,7 @@ def process_limiter_and_violations(bot=None):
         uname = acc["vpn_username"]
         proto = acc["protocol"]
         user_id = acc["user_id"]
+        node_id = acc.get("node_id", 0)
         locked_until_str = acc.get("locked_until")
         reason = acc.get("lock_reason", "")
 
@@ -131,8 +135,8 @@ def process_limiter_and_violations(bot=None):
             try:
                 locked_until = datetime.datetime.strptime(locked_until_str, "%Y-%m-%d %H:%M:%S")
                 if now >= locked_until:
-                    logger.info(f"Lock expired for user {uname}. Restoring account...")
-                    xray_manager.unsuspend_account(proto, uname)
+                    logger.info(f"Lock expired for user {uname} on node {node_id}. Restoring account...")
+                    node_client.unsuspend_account(node_id, uname, protocol=proto)
                     if bot:
                         try:
                             text_user = (
@@ -155,63 +159,70 @@ def process_limiter_and_violations(bot=None):
             except Exception as e:
                 logger.error(f"Error parsing locked_until for {uname}: {e}")
 
-    # --- 2. Check active IP multi-login violations ---
-    active_sessions = xray_manager.get_active_sessions()
-    for uname, ips in active_sessions.items():
-        acc = database.get_account_by_username(uname)
-        if not acc:
-            continue
+    # --- 2. Check active IP multi-login violations across all nodes ---
+    all_nodes_sessions = node_client.get_all_active_sessions()
+    for nid, node_data in all_nodes_sessions.items():
+        node_name = node_data.get("node_name", f"Node #{nid}")
+        node_sessions = node_data.get("sessions", {})
+        for uname, ips in node_sessions.items():
+            acc = database.get_account_by_username(uname)
+            if not acc:
+                continue
 
-        if acc.get("status") == "suspended":
-            continue
+            if acc.get("status") == "suspended":
+                continue
 
-        proto = acc.get("protocol", "vmess")
-        user_id = acc.get("user_id")
-        ip_limit = acc.get("ip_limit") or cfg.get("DEFAULT_IP_LIMIT", 2)
+            proto = acc.get("protocol", "vmess")
+            user_id = acc.get("user_id")
+            ip_limit = acc.get("ip_limit") or cfg.get("DEFAULT_IP_LIMIT", 2)
 
-        if len(ips) > ip_limit:
-            if auto_suspend:
-                logger.warning(f"Violation: user {uname} exceeded IP limit ({len(ips)} > {ip_limit}). Suspending for {suspend_duration}m...")
-                until_str = xray_manager.suspend_account(proto, uname, duration_minutes=suspend_duration, reason="multi_login")
-                
-                if bot:
-                    try:
-                        ips_sample = ", ".join(ips[:3])
-                        if len(ips) > 3:
-                            ips_sample += f" (+{len(ips)-3} lainnya)"
+            if len(ips) > ip_limit:
+                if auto_suspend:
+                    logger.warning(f"Violation: user {uname} on node {nid} ({node_name}) exceeded IP limit ({len(ips)} > {ip_limit}). Suspending for {suspend_duration}m...")
+                    node_client.suspend_account(nid, uname, protocol=proto, duration_minutes=suspend_duration, reason="multi_login")
+                    until_dt = datetime.datetime.now() + datetime.timedelta(minutes=suspend_duration)
+                    until_str = until_dt.strftime("%Y-%m-%d %H:%M:%S")
 
-                        text_violator = (
-                            f"⚠️ <b>PERINGATAN: AKUN DITANGGUHKAN SEMENTARA</b>\n"
-                            f"━━━━━━━━━━━━━━━━━━\n"
-                            f"» Akun: <code>{uname}</code> ({proto.upper()})\n"
-                            f"» Pelanggaran: <b>Multi-Login Melebihi Batas</b>\n"
-                            f"» Batas IP: <code>{ip_limit} IP</code>\n"
-                            f"» IP Terdeteksi: <code>{len(ips)} IP</code> ({ips_sample})\n"
-                            f"» Sanksi: <b>Akun Dimatikan {suspend_duration} Menit</b>\n"
-                            f"» Aktif Kembali: <code>{until_str}</code>\n"
-                            f"━━━━━━━━━━━━━━━━━━\n"
-                            f"🤖 <i>Akun Anda akan otomatis aktif kembali setelah {suspend_duration} menit. Mohon tidak berbagi akun!</i>"
-                        )
-                        bot.send_message(user_id, text_violator, parse_mode="HTML")
-                    except Exception as e:
-                        logger.error(f"Failed to alert user {user_id} of suspension: {e}")
-
-                    if admin_id:
+                    if bot:
                         try:
-                            text_adm = (
-                                f"🚨 <b>NOTIFIKASI PELANGGARAN MULTI-LOGIN</b>\n"
+                            ips_sample = ", ".join(ips[:3])
+                            if len(ips) > 3:
+                                ips_sample += f" (+{len(ips)-3} lainnya)"
+
+                            text_violator = (
+                                f"⚠️ <b>PERINGATAN: AKUN DITANGGUHKAN SEMENTARA</b>\n"
                                 f"━━━━━━━━━━━━━━━━━━\n"
-                                f"» User: <code>{uname}</code> ({proto})\n"
-                                f"» Terdeteksi: <b>{len(ips)} IP Aktif</b> (Batas: {ip_limit} IP)\n"
-                                f"» IP: <code>{', '.join(ips)}</code>\n"
-                                f"» Tindakan: <b>Disuspen {suspend_duration} Menit</b>\n"
-                                f"» Berakhir: <code>{until_str}</code>"
+                                f"» Server: <b>{node_name}</b>\n"
+                                f"» Akun: <code>{uname}</code> ({proto.upper()})\n"
+                                f"» Pelanggaran: <b>Multi-Login Melebihi Batas</b>\n"
+                                f"» Batas IP: <code>{ip_limit} IP</code>\n"
+                                f"» IP Terdeteksi: <code>{len(ips)} IP</code> ({ips_sample})\n"
+                                f"» Sanksi: <b>Akun Dimatikan {suspend_duration} Menit</b>\n"
+                                f"» Aktif Kembali: <code>{until_str}</code>\n"
+                                f"━━━━━━━━━━━━━━━━━━\n"
+                                f"🤖 <i>Akun Anda akan otomatis aktif kembali setelah {suspend_duration} menit. Mohon tidak berbagi akun!</i>"
                             )
-                            bot.send_message(admin_id, text_adm, parse_mode="HTML")
-                        except Exception:
-                            pass
-            else:
-                logger.info(f"Notice: user {uname} active IPs: {len(ips)} (limit: {ip_limit}). Auto-suspend disabled.")
+                            bot.send_message(user_id, text_violator, parse_mode="HTML")
+                        except Exception as e:
+                            logger.error(f"Failed to alert user {user_id} of suspension: {e}")
+
+                        if admin_id:
+                            try:
+                                text_adm = (
+                                    f"🚨 <b>NOTIFIKASI PELANGGARAN MULTI-LOGIN</b>\n"
+                                    f"━━━━━━━━━━━━━━━━━━\n"
+                                    f"» Server: <b>{node_name}</b> (Node #{nid})\n"
+                                    f"» User: <code>{uname}</code> ({proto})\n"
+                                    f"» Terdeteksi: <b>{len(ips)} IP Aktif</b> (Batas: {ip_limit} IP)\n"
+                                    f"» IP: <code>{', '.join(ips)}</code>\n"
+                                    f"» Tindakan: <b>Disuspen {suspend_duration} Menit</b>\n"
+                                    f"» Berakhir: <code>{until_str}</code>"
+                                )
+                                bot.send_message(admin_id, text_adm, parse_mode="HTML")
+                            except Exception:
+                                pass
+                else:
+                    logger.info(f"Notice: user {uname} active IPs: {len(ips)} (limit: {ip_limit}) on node {nid}. Auto-suspend disabled.")
 
     # --- 3. Check quota limits ---
     all_accounts = database.get_all_vpn_accounts_detailed(limit=200)
@@ -222,29 +233,31 @@ def process_limiter_and_violations(bot=None):
         uname = acc["vpn_username"]
         proto = acc["protocol"]
         user_id = acc["user_id"]
-        
-        status_info = xray_manager.get_user_usage_and_status(uname, proto)
-        quota_bytes = status_info.get("quota_bytes", 0)
-        used_bytes = status_info.get("used_bytes", 0)
+        node_id = acc.get("node_id", 0)
 
-        if quota_bytes > 0 and used_bytes >= quota_bytes:
-            logger.warning(f"Quota exceeded for user {uname} ({status_info['used_human']} >= {status_info['quota_human']}). Suspending...")
-            xray_manager.suspend_account(proto, uname, duration_minutes=525600, reason="quota_exceeded")
+        if node_id == 0:
+            status_info = xray_manager.get_user_usage_and_status(uname, proto)
+            quota_bytes = status_info.get("quota_bytes", 0)
+            used_bytes = status_info.get("used_bytes", 0)
 
-            if bot:
-                try:
-                    text_quota = (
-                        f"⚠️ <b>KUOTA PEMAKAIAN TELAH HABIS</b>\n"
-                        f"━━━━━━━━━━━━━━━━━━\n"
-                        f"» Akun: <code>{uname}</code> ({proto.upper()})\n"
-                        f"» Pemakaian: <b>{status_info['used_human']} / {status_info['quota_human']}</b>\n"
-                        f"» Status: <b>Akun Dinonaktifkan</b>\n"
-                        f"━━━━━━━━━━━━━━━━━━\n"
-                        f"Silakan hubungi Admin atau perpanjang paket untuk menambah kuota."
-                    )
-                    bot.send_message(user_id, text_quota, parse_mode="HTML")
-                except Exception as e:
-                    logger.error(f"Failed to notify user {user_id} of quota expiry: {e}")
+            if quota_bytes > 0 and used_bytes >= quota_bytes:
+                logger.warning(f"Quota exceeded for user {uname} ({status_info['used_human']} >= {status_info['quota_human']}). Suspending...")
+                node_client.suspend_account(node_id, uname, protocol=proto, duration_minutes=525600, reason="quota_exceeded")
+
+                if bot:
+                    try:
+                        text_quota = (
+                            f"⚠️ <b>KUOTA PEMAKAIAN TELAH HABIS</b>\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"» Akun: <code>{uname}</code> ({proto.upper()})\n"
+                            f"» Pemakaian: <b>{status_info['used_human']} / {status_info['quota_human']}</b>\n"
+                            f"» Status: <b>Akun Dinonaktifkan</b>\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"Silakan hubungi Admin atau perpanjang paket untuk menambah kuota."
+                        )
+                        bot.send_message(user_id, text_quota, parse_mode="HTML")
+                    except Exception as e:
+                        logger.error(f"Failed to notify user {user_id} of quota expiry: {e}")
 
 def run_worker_loop(bot=None):
     """Main worker loop running in background thread"""
