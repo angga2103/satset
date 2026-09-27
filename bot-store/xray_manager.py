@@ -538,13 +538,17 @@ def format_bytes(bytes_count: int) -> str:
 
 def is_ignored_ip(ip: str) -> bool:
     """Filter out localhost, private ranges, and Cloudflare CDN proxy IPs"""
-    if not ip or ip in ["127.0.0.1", "0.0.0.0", "localhost"]:
+    if not ip:
         return True
-    if ip.startswith("10.") or ip.startswith("192.168.") or ip.startswith("127."):
+    # Clean possible suffixes like (WS) or (WS-Proxy)
+    clean_ip = ip.replace("(WS)", "").replace("(WS-Proxy)", "").strip()
+    if clean_ip in ["127.0.0.1", "0.0.0.0", "localhost", "::1"]:
         return True
-    parts = ip.split(".")
+    if clean_ip.startswith("10.") or clean_ip.startswith("192.168.") or clean_ip.startswith("127."):
+        return True
+    parts = clean_ip.split(".")
     if len(parts) != 4:
-        return True
+        return False
     try:
         p0, p1 = int(parts[0]), int(parts[1])
         if p0 == 172 and 16 <= p1 <= 31:
@@ -633,6 +637,17 @@ def detect_user_protocol(username: str) -> str:
             except Exception:
                 pass
 
+    # 5. Check /etc/passwd for system SSH users (UID >= 1000)
+    try:
+        with open("/etc/passwd", "r") as f:
+            for line in f:
+                parts = line.strip().split(":")
+                if len(parts) >= 3 and parts[0] == username:
+                    if parts[2].isdigit() and int(parts[2]) >= 1000:
+                        return "ssh"
+    except Exception:
+        pass
+
     return None
 
 def get_all_ssh_users() -> set:
@@ -652,6 +667,16 @@ def get_all_ssh_users() -> set:
         for a in accs:
             if a.get("protocol") == "ssh" and a.get("vpn_username"):
                 users.add(a["vpn_username"])
+    except Exception:
+        pass
+    try:
+        with open("/etc/passwd", "r") as f:
+            for line in f:
+                parts = line.strip().split(":")
+                if len(parts) >= 3 and parts[2].isdigit():
+                    u = parts[0]
+                    if int(parts[2]) >= 1000 and u not in SYSTEM_USERS and not u.startswith("systemd-"):
+                        users.add(u)
     except Exception:
         pass
     return users
@@ -705,7 +730,7 @@ def get_active_sessions() -> dict:
         except Exception as e:
             logger.warning(f"Error reading Xray access log: {e}")
 
-    # 2. Parse Dropbear active sessions (including WebSocket sessions via ws-stunnel)
+    # 2. Parse Dropbear & OpenSSH active sessions (including WebSocket sessions via ws-stunnel)
     ws_session_map = {}
     ws_file = "/run/satset/ws_sessions.json"
     if os.path.exists(ws_file):
@@ -715,79 +740,148 @@ def get_active_sessions() -> dict:
         except Exception:
             pass
 
+    # Collect dropbear & ssh authentication logs from BOTH auth.log and journalctl
+    ssh_logs = []
+    if os.path.exists("/var/log/auth.log") and os.path.getsize("/var/log/auth.log") > 0:
+        try:
+            with open("/var/log/auth.log", "r", encoding="utf-8", errors="ignore") as f:
+                ssh_logs.extend(f.readlines()[-800:])
+        except Exception:
+            pass
+
+    try:
+        p = subprocess.run(
+            ["journalctl", "-u", "dropbear", "-u", "ssh", "-u", "sshd", "-n", "800", "--no-pager"],
+            capture_output=True, text=True, timeout=2
+        )
+        if p.returncode == 0:
+            ssh_logs.extend(p.stdout.splitlines()[-800:])
+    except Exception:
+        pass
+
+    # Find all currently running Dropbear process PIDs
     active_dropbear_pids = set()
     try:
         p = subprocess.run(["ps", "-eo", "pid,comm"], capture_output=True, text=True, timeout=2)
         if p.returncode == 0:
             for line in p.stdout.splitlines():
                 parts = line.strip().split()
-                if len(parts) >= 2 and "dropbear" in parts[1]:
+                if len(parts) >= 2 and "dropbear" in parts[1].lower():
                     active_dropbear_pids.add(parts[0])
     except Exception:
         pass
 
+    # A. Check Dropbear auth entries in logs
     if active_dropbear_pids:
-        dropbear_logs = []
-        if os.path.exists("/var/log/auth.log") and os.path.getsize("/var/log/auth.log") > 0:
-            try:
-                with open("/var/log/auth.log", "r", encoding="utf-8", errors="ignore") as f:
-                    lines = f.readlines()
-                    dropbear_logs = [l for l in lines[-600:] if "Password auth succeeded" in l and "dropbear" in l]
-            except Exception:
-                pass
-        
-        if not dropbear_logs:
-            try:
-                p = subprocess.run(
-                    ["journalctl", "-u", "dropbear", "-n", "300", "--no-pager"],
-                    capture_output=True, text=True, timeout=2
-                )
-                if p.returncode == 0:
-                    dropbear_logs = [l for l in p.stdout.splitlines() if "Password auth succeeded" in l]
-            except Exception:
-                pass
+        for l in ssh_logs:
+            if "auth succeeded for" not in l:
+                continue
+            pid_m = re.search(r'dropbear\[(\d+)\]', l)
+            user_m = re.search(r'auth succeeded for [\'"]?([a-zA-Z0-9_.-]+)[\'"]?', l)
+            ip_m = re.search(r'from\s+([0-9.]+)(?::(\d+))?', l)
 
-        for l in dropbear_logs:
-            m = re.search(r'dropbear\[(\d+)\]:\s*Password auth succeeded for \'([a-zA-Z0-9_]+)\' from ([0-9.]+):(\d+)', l)
-            if m:
-                d_pid, d_user, d_ip, d_port = m.group(1), m.group(2), m.group(3), m.group(4)
-                if d_pid in active_dropbear_pids and d_user not in SYSTEM_USERS and not d_user.startswith("systemd-"):
-                    real_ip = d_ip
-                    if d_ip == "127.0.0.1":
-                        ws_info = ws_session_map.get(d_port)
-                        if ws_info and isinstance(ws_info, dict) and "ip" in ws_info:
+            if pid_m and user_m and ip_m:
+                d_pid = pid_m.group(1)
+                d_user = user_m.group(1).strip()
+                d_ip = ip_m.group(1).strip()
+                d_port = ip_m.group(2).strip() if ip_m.group(2) else ""
+
+                if d_user in SYSTEM_USERS or d_user.startswith("systemd-"):
+                    continue
+
+                # Verify that this PID is an active dropbear process
+                is_running = False
+                if d_pid in active_dropbear_pids:
+                    is_running = True
+                elif os.path.exists(f"/proc/{d_pid}"):
+                    try:
+                        with open(f"/proc/{d_pid}/comm", "r") as cf:
+                            if "dropbear" in cf.read().lower():
+                                is_running = True
+                    except Exception:
+                        is_running = True
+
+                if not is_running:
+                    continue
+
+                # Resolve WebSocket client IP if connected via local tunnel
+                real_ip = d_ip
+                if d_ip in ["127.0.0.1", "localhost", "::1"]:
+                    if d_port and str(d_port) in ws_session_map:
+                        ws_info = ws_session_map[str(d_port)]
+                        if isinstance(ws_info, dict) and "ip" in ws_info:
                             real_ip = ws_info["ip"]
-                        else:
-                            real_ip = "127.0.0.1 (WS)"
-                    if not is_ignored_ip(real_ip):
-                        if d_user not in sessions:
-                            sessions[d_user] = set()
-                        sessions[d_user].add(real_ip)
+                        elif isinstance(ws_info, str) and ws_info:
+                            real_ip = ws_info
+                    else:
+                        real_ip = "127.0.0.1 (WS)"
 
-    # 3. Parse OpenSSH active sessions
+                if d_user not in sessions:
+                    sessions[d_user] = set()
+                sessions[d_user].add(real_ip)
+
+    # B. Check OpenSSH auth entries in logs
+    for l in ssh_logs:
+        if "Accepted password for" not in l and "Accepted publickey for" not in l:
+            continue
+        pid_m = re.search(r'sshd\[(\d+)\]', l)
+        user_m = re.search(r'Accepted (?:password|publickey) for ([a-zA-Z0-9_.-]+)', l)
+        ip_m = re.search(r'from\s+([0-9.]+)', l)
+        if pid_m and user_m and ip_m:
+            s_pid = pid_m.group(1)
+            s_user = user_m.group(1).strip()
+            s_ip = ip_m.group(1).strip()
+
+            if s_user in SYSTEM_USERS or s_user.startswith("systemd-"):
+                continue
+
+            if os.path.exists(f"/proc/{s_pid}"):
+                if s_user not in sessions:
+                    sessions[s_user] = set()
+                sessions[s_user].add(s_ip)
+
+    # C. Process-level scan: check every registered / OS SSH user for running processes
     all_ssh = get_all_ssh_users()
     for u in all_ssh:
         if u in SYSTEM_USERS or u.startswith("systemd-"):
             continue
+        # If user already has an active session detected from Dropbear/OpenSSH, continue
+        if u in sessions and sessions[u]:
+            continue
         try:
             p = subprocess.run(["ps", "-u", u, "-o", "pid="], capture_output=True, text=True, timeout=1)
             if p.returncode == 0 and p.stdout.strip():
-                u_ip = "Direct SSH"
-                if os.path.exists("/var/log/auth.log") and os.path.getsize("/var/log/auth.log") > 0:
-                    try:
-                        with open("/var/log/auth.log", "r", encoding="utf-8", errors="ignore") as f:
-                            for al in reversed(f.readlines()[-400:]):
-                                if f"Accepted password for {u} from " in al:
-                                    ip_m = re.search(r'from\s+([0-9.]+)', al)
-                                    if ip_m:
-                                        u_ip = ip_m.group(1)
-                                        break
-                    except Exception:
-                        pass
-                if not is_ignored_ip(u_ip):
-                    if u not in sessions:
-                        sessions[u] = set()
-                    sessions[u].add(u_ip)
+                u_ip = None
+                # 1. Try 'who' command for interactive TTY
+                try:
+                    w = subprocess.run(["who"], capture_output=True, text=True, timeout=1)
+                    if w.returncode == 0:
+                        for wl in w.stdout.splitlines():
+                            parts = wl.split()
+                            if len(parts) >= 3 and parts[0] == u:
+                                wip = parts[-1].strip("()")
+                                if wip and wip != u:
+                                    u_ip = wip
+                                    break
+                except Exception:
+                    pass
+
+                # 2. Try auth logs
+                if not u_ip:
+                    for al in reversed(ssh_logs):
+                        if u in al and ("Accepted password for" in al or "auth succeeded for" in al):
+                            ip_srch = re.search(r'from\s+([0-9.]+)', al)
+                            if ip_srch:
+                                u_ip = ip_srch.group(1)
+                                break
+
+                # 3. Fallback to active indicator
+                if not u_ip or u_ip in ["127.0.0.1", "localhost"]:
+                    u_ip = "127.0.0.1 (WS)"
+
+                if u not in sessions:
+                    sessions[u] = set()
+                sessions[u].add(u_ip)
         except Exception:
             pass
 
@@ -797,8 +891,12 @@ def get_active_sessions() -> dict:
         if u in SYSTEM_USERS or u.startswith("systemd-"):
             continue
         proto = detect_user_protocol(u)
+        if not proto and u in all_ssh:
+            proto = "ssh"
         if proto:
-            cleaned_sessions[u] = sorted(list(ips))
+            valid_ips = [ip for ip in sorted(list(ips)) if ip]
+            if valid_ips:
+                cleaned_sessions[u] = valid_ips
 
     return cleaned_sessions
 
@@ -1069,6 +1167,24 @@ def sync_all_accounts() -> dict:
                         database.add_vpn_account(0, "ssh", uname, pwd, "vps-cli", exp_date, ssh_link, quota_gb=q_gb, ip_limit=ip_l, price_paid=0)
                         synced_to_db.append(uname)
                         known_db_users.add(uname)
+
+        # Scan /etc/passwd for system SSH users with UID >= 1000
+        if os.path.exists("/etc/passwd"):
+            try:
+                with open("/etc/passwd", "r") as f:
+                    for line in f:
+                        parts = line.strip().split(":")
+                        if len(parts) >= 3 and parts[2].isdigit():
+                            uname = parts[0]
+                            uid = int(parts[2])
+                            if uid >= 1000 and uname not in SYSTEM_USERS and not uname.startswith("systemd-") and uname not in known_db_users:
+                                exp_date = (datetime.datetime.now() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+                                domain = get_domain()
+                                database.add_vpn_account(0, "ssh", uname, "sat12345", "vps-cli", exp_date, f"ssh://{uname}:sat12345@{domain}:443", quota_gb=0, ip_limit=1, price_paid=0)
+                                synced_to_db.append(uname)
+                                known_db_users.add(uname)
+            except Exception:
+                pass
 
         # Scan /etc/xray/config.json
         cfg_path = "/etc/xray/config.json"
