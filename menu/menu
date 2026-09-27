@@ -163,15 +163,20 @@ echo -e "${BIWhite} │${NC}  ${BIWhite}SSH: ${Lime}$sshx${NC}  ${BIWhite}VMESS:
 echo -e "${BIWhite} ├─────────────────────────────────────────────────────┤${NC}"
 
 CLUSTER_FILE="/etc/satset/cluster.json"
-NODE_KEY_FILE="/etc/satset/node-key.txt"
 CLUSTER_ROLE="standalone"
 if [ -f "$CLUSTER_FILE" ]; then
     CLUSTER_ROLE=$(python3 -c "import json; print(json.load(open('$CLUSTER_FILE')).get('role', 'standalone'))" 2>/dev/null || echo "standalone")
 fi
-NODE_KEY=""
-if [ -f "$NODE_KEY_FILE" ]; then
-    NODE_KEY=$(cat "$NODE_KEY_FILE" | tr -d '[:space:]' | head -c 16)
+NODE_KEY_FILE="/etc/satset/node-key.txt"
+if [ ! -s "$NODE_KEY_FILE" ]; then
+    mkdir -p /etc/satset
+    NEW_K=$(python3 -c "import secrets; print(secrets.token_hex(24))" 2>/dev/null || openssl rand -hex 24 2>/dev/null || tr -dc 'a-f0-9' < /dev/urandom | head -c 48 2>/dev/null)
+    if [ -n "$NEW_K" ]; then
+        echo "$NEW_K" > "$NODE_KEY_FILE"
+        chmod 600 "$NODE_KEY_FILE" 2>/dev/null || true
+    fi
 fi
+NODE_KEY=$(cat "$NODE_KEY_FILE" 2>/dev/null | tr -d '[:space:]' | head -c 16)
 
 if [ "$CLUSTER_ROLE" = "master" ]; then
     echo -e "${BIWhite} │${NC}  ${BIWhite}Cluster  : ${Lime}👑 VPS MASTER (SERVER PUSAT)${NC}"

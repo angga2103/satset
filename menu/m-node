@@ -38,11 +38,27 @@ get_port() {
 }
 
 get_key() {
-    if [ -f "$KEY_FILE" ]; then
-        cat "$KEY_FILE" | tr -d '[:space:]'
-    else
-        echo ""
+    mkdir -p /etc/satset 2>/dev/null
+    chmod 755 /etc/satset 2>/dev/null
+    local k=""
+    if [ -s "$KEY_FILE" ]; then
+        k=$(cat "$KEY_FILE" | tr -d '[:space:]')
     fi
+    if [ -z "$k" ]; then
+        k=$(python3 -c "import secrets; print(secrets.token_hex(24))" 2>/dev/null)
+        if [ -z "$k" ]; then
+            k=$(openssl rand -hex 24 2>/dev/null)
+        fi
+        if [ -z "$k" ]; then
+            k=$(head -c 32 /dev/urandom 2>/dev/null | md5sum | head -c 32)
+        fi
+        if [ -n "$k" ]; then
+            echo "$k" > "$KEY_FILE"
+            chmod 600 "$KEY_FILE" 2>/dev/null
+            systemctl restart satset-node 2>/dev/null || true
+        fi
+    fi
+    echo "$k"
 }
 
 get_role() {
@@ -68,6 +84,48 @@ count_nodes() {
         echo "0"
     fi
 }
+
+ensure_satset_node() {
+    mkdir -p /etc/satset /etc/satset/bot-store /usr/local/bin 2>/dev/null
+    local GITHUB_RAW="https://raw.githubusercontent.com/angga2103/satset/main"
+
+    # Pastikan node-key.txt ada dan terisi
+    if [ ! -s "$KEY_FILE" ]; then
+        local _k
+        _k=$(python3 -c "import secrets; print(secrets.token_hex(24))" 2>/dev/null || openssl rand -hex 24 2>/dev/null || tr -dc 'a-f0-9' < /dev/urandom | head -c 48 2>/dev/null)
+        if [ -n "$_k" ]; then
+            echo "$_k" > "$KEY_FILE"
+            chmod 600 "$KEY_FILE" 2>/dev/null
+        fi
+    fi
+
+    # Pastikan binary satset-node terpasang
+    if [ ! -s "/usr/local/bin/satset-node" ] || [ ! -x "/usr/local/bin/satset-node" ]; then
+        curl -sS -L -o /usr/local/bin/satset-node "${GITHUB_RAW}/files/satset-node.py" 2>/dev/null || \
+        wget -q -O /usr/local/bin/satset-node "${GITHUB_RAW}/files/satset-node.py" 2>/dev/null || true
+        chmod +x /usr/local/bin/satset-node 2>/dev/null || true
+        ln -sf /usr/local/bin/satset-node /usr/bin/satset-node 2>/dev/null || true
+    fi
+
+    # Pastikan modul python satset_node tersedia
+    if [ -f /usr/local/bin/satset-node ] && [ ! -f /usr/local/bin/satset_node.py ]; then
+        cp -f /usr/local/bin/satset-node /usr/local/bin/satset_node.py 2>/dev/null || true
+    fi
+
+    # Pastikan service systemd satset-node aktif
+    if [ ! -f "/etc/systemd/system/satset-node.service" ]; then
+        curl -sS -L -o /etc/systemd/system/satset-node.service "${GITHUB_RAW}/files/satset-node.service" 2>/dev/null || \
+        wget -q -O /etc/systemd/system/satset-node.service "${GITHUB_RAW}/files/satset-node.service" 2>/dev/null || true
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable satset-node 2>/dev/null || true
+        systemctl restart satset-node 2>/dev/null || true
+    elif ! systemctl is-active --quiet satset-node 2>/dev/null; then
+        systemctl enable satset-node 2>/dev/null || true
+        systemctl restart satset-node 2>/dev/null || true
+    fi
+}
+
+ensure_satset_node
 
 while true; do
     clear
@@ -150,6 +208,8 @@ else:
                 ;;
             2|02)
                 clear
+                KEY=$(get_key)
+                TOKEN="satset-node://${HOST}:${PORT}#key=${KEY}"
                 echo -e "${BIWhite}──────────────────────────────────────────${NC}"
                 echo -e "${Lime}        TOKEN KONEKSI VPS INI             ${NC}"
                 echo -e "${BIWhite}──────────────────────────────────────────${NC}"
@@ -494,6 +554,8 @@ except Exception as e:
                 ;;
             5|05)
                 clear
+                KEY=$(get_key)
+                TOKEN="satset-node://${HOST}:${PORT}#key=${KEY}"
                 echo -e "${BIWhite}──────────────────────────────────────────${NC}"
                 echo -e "${Lime}        TOKEN KONEKSI VPS INI             ${NC}"
                 echo -e "${BIWhite}──────────────────────────────────────────${NC}"
@@ -534,12 +596,34 @@ except Exception as e:
                 ;;
             9|09)
                 clear
-                echo -e "${RED}PERINGATAN: Mereset API Key akan memutus koneksi Master/Cabang!${NC}"
+                echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+                echo -e "${RED}       RESET / GENERATE API KEY BARU      ${NC}"
+                echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+                echo -e "${BIYellow}PERINGATAN: Mereset API Key akan memutus koneksi Master/Cabang!${NC}"
+                echo -e "Token koneksi VPS ini akan diperbarui dengan kunci baru."
+                echo ""
                 echo -ne "${BIYellow}Ketik 'RESET' untuk konfirmasi: ${NC}"
                 read -r conf
                 if [ "$conf" = "RESET" ]; then
-                    python3 "$NODE_BIN" reset-key
-                    sleep 2
+                    mkdir -p /etc/satset 2>/dev/null
+                    NEW_K=$(python3 -c "import secrets; print(secrets.token_hex(24))" 2>/dev/null || openssl rand -hex 24 2>/dev/null || tr -dc 'a-f0-9' < /dev/urandom | head -c 48 2>/dev/null)
+                    if [ -n "$NEW_K" ]; then
+                        echo "$NEW_K" > "$KEY_FILE"
+                        chmod 600 "$KEY_FILE" 2>/dev/null
+                        systemctl restart satset-node 2>/dev/null || true
+                        KEY="$NEW_K"
+                        TOKEN="satset-node://${HOST}:${PORT}#key=${KEY}"
+                        echo ""
+                        echo -e "${green}[✓] API Key Berhasil Direset & Diperbarui!${NC}"
+                        echo -e "API Key Baru : ${CYAN}${NEW_K}${NC}"
+                        echo -e "Token Baru   : ${BIYellow}${TOKEN}${NC}"
+                        echo ""
+                        echo -e "${Lime}Service satset-node telah direstart dengan kredensial baru.${NC}"
+                    else
+                        echo -e "${RED}Gagal men-generate API Key baru!${NC}"
+                    fi
+                    echo -e "${BIWhite}──────────────────────────────────────────${NC}"
+                    read -rp "Tekan [Enter] untuk kembali..."
                 else
                     echo -e "${RED}Dibatalkan.${NC}"
                     sleep 1

@@ -702,7 +702,20 @@ function memasang_menu(){
     wget -q -O /usr/local/bin/satset-node "${REPO}files/satset-node.py" || true
     chmod +x /usr/local/bin/satset-node 2>/dev/null || true
     ln -sf /usr/local/bin/satset-node /usr/bin/satset-node 2>/dev/null || true
+    cp -f /usr/local/bin/satset-node /usr/local/bin/satset_node.py 2>/dev/null || true
     wget -q -O /etc/systemd/system/satset-node.service "${REPO}files/satset-node.service" || true
+
+    mkdir -p /etc/satset
+    if [ ! -s /etc/satset/node-key.txt ]; then
+        NODE_NEW_KEY=$(python3 -c "import secrets; print(secrets.token_hex(24))" 2>/dev/null || openssl rand -hex 24 2>/dev/null || tr -dc 'a-f0-9' < /dev/urandom | head -c 48 2>/dev/null)
+        if [ -n "$NODE_NEW_KEY" ]; then
+            echo "$NODE_NEW_KEY" > /etc/satset/node-key.txt
+            chmod 600 /etc/satset/node-key.txt 2>/dev/null || true
+        fi
+    fi
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable --now satset-node 2>/dev/null || true
+    systemctl restart satset-node 2>/dev/null || true
 
     print_success "Menu"
 }
