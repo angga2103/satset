@@ -10,9 +10,35 @@ import random
 import secrets
 import json
 import logging
-from config import DB_FILE, INVOICE_TIMEOUT_MINUTES, UNIQUE_CODE_MIN, UNIQUE_CODE_MAX
 
 logger = logging.getLogger("satset_pay.db")
+
+try:
+    import config as _cfg
+    if hasattr(_cfg, "DB_FILE"):
+        DB_FILE = _cfg.DB_FILE
+        INVOICE_TIMEOUT_MINUTES = _cfg.INVOICE_TIMEOUT_MINUTES
+        UNIQUE_CODE_MIN = _cfg.UNIQUE_CODE_MIN
+        UNIQUE_CODE_MAX = _cfg.UNIQUE_CODE_MAX
+    else:
+        raise AttributeError("DB_FILE not found in config")
+except (ImportError, AttributeError):
+    import importlib.util
+    import os as _os
+    _cfg_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "config.py")
+    if _os.path.exists(_cfg_path):
+        _spec = importlib.util.spec_from_file_location("satset_pay_cfg_internal", _cfg_path)
+        _cfg_mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_cfg_mod)
+        DB_FILE = _cfg_mod.DB_FILE
+        INVOICE_TIMEOUT_MINUTES = _cfg_mod.INVOICE_TIMEOUT_MINUTES
+        UNIQUE_CODE_MIN = _cfg_mod.UNIQUE_CODE_MIN
+        UNIQUE_CODE_MAX = _cfg_mod.UNIQUE_CODE_MAX
+    else:
+        DB_FILE = "/etc/satset/satset-pay/satset_pay.db"
+        INVOICE_TIMEOUT_MINUTES = 15
+        UNIQUE_CODE_MIN = 1
+        UNIQUE_CODE_MAX = 999
 
 def get_connection():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False, timeout=30.0)
@@ -106,10 +132,13 @@ def init_db():
         """, (default_api, default_sec, now))
 
     # Seed Default Settings if missing
+    USER_DEFAULT_QRIS = "00020101021126610014COM.GO-JEK.WWW01189360091430357620430210G0357620430303UMI51440014ID.CO.QRIS.WWW0215ID10264816761320303UMI5204481453033605802ID5924Mas Angga Store, Pulsa &6006KEDIRI61056416262070703A01630449CC"
+    USER_BRAND_NAME = "Mas Angga Store, Pulsa &"
+
     defaults = {
         "admin_password": "admin123",
-        "static_qris": "",
-        "brand_name": "SATSET-PAY",
+        "static_qris": USER_DEFAULT_QRIS,
+        "brand_name": USER_BRAND_NAME,
         "webhook_secret": secrets.token_hex(20),
         "unique_code_min": str(UNIQUE_CODE_MIN),
         "unique_code_max": str(UNIQUE_CODE_MAX),
@@ -117,6 +146,10 @@ def init_db():
     }
     for k, v in defaults.items():
         c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
+        if k == "static_qris":
+            c.execute("UPDATE settings SET value = ? WHERE key = 'static_qris' AND (value = '' OR value IS NULL)", (v,))
+        if k == "brand_name":
+            c.execute("UPDATE settings SET value = ? WHERE key = 'brand_name' AND (value = 'SATSET-PAY' OR value = '' OR value IS NULL)", (v,))
 
     conn.commit()
     conn.close()

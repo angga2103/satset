@@ -1,3 +1,4 @@
+import os
 import requests
 import json
 import logging
@@ -9,17 +10,26 @@ BASE_URL = "https://app.pakasir.com/api"
 
 def create_qris(order_id: str, amount: int) -> dict:
     """
-    Create a new QRIS payment via Pakasir API.
+    Create a new QRIS payment via Pakasir API or SATSET-PAY Gateway.
     Returns dict with success status, qr_url, qr_string, and error message if any.
     """
     cfg = load_config()
+    gateway = str(cfg.get("PAYMENT_GATEWAY", "auto")).lower()
     project = cfg.get("PAKASIR_PROJECT_SLUG", "")
     api_key = cfg.get("PAKASIR_API_KEY", "")
+
+    # If specifically configured for satset_pay OR if auto and Pakasir credentials missing
+    if gateway in ["satset_pay", "satset-pay", "self"] or (gateway == "auto" and (not project or not api_key)):
+        res_pay = _create_qris_satset_pay(order_id, amount, cfg)
+        if res_pay.get("success"):
+            return res_pay
+        if not project or not api_key:
+            return res_pay
 
     if not project or not api_key:
         return {
             "success": False,
-            "error": "Pakasir API credentials (PROJECT_SLUG or API_KEY) belum dikonfigurasi di /etc/satset/bot.env"
+            "error": "Payment credentials belum dikonfigurasi (Pakasir atau SATSET-PAY)."
         }
 
     url = f"{BASE_URL}/transactioncreate/qris"
@@ -104,17 +114,23 @@ def create_qris(order_id: str, amount: int) -> dict:
 
 def check_transaction(order_id: str, amount: int = None) -> dict:
     """
-    Check transaction status from Pakasir API.
+    Check transaction status from Pakasir API or SATSET-PAY Gateway.
     Returns dict with status: 'completed', 'pending', 'expired', 'failed'
     """
     cfg = load_config()
+    gateway = str(cfg.get("PAYMENT_GATEWAY", "auto")).lower()
     project = cfg.get("PAKASIR_PROJECT_SLUG", "")
     api_key = cfg.get("PAKASIR_API_KEY", "")
+
+    if gateway in ["satset_pay", "satset-pay", "self"] or (gateway == "auto" and (not project or not api_key)):
+        res_pay = _check_transaction_satset_pay(order_id, cfg)
+        if res_pay.get("status") in ["completed", "expired"] or (not project or not api_key):
+            return res_pay
 
     if not project or not api_key:
         return {
             "status": "error",
-            "message": "Pakasir API credentials belum dikonfigurasi."
+            "message": "Payment credentials belum dikonfigurasi."
         }
 
     if amount is None:
@@ -187,3 +203,148 @@ def check_transaction(order_id: str, amount: int = None) -> dict:
             "status": "error",
             "message": str(e)
         }
+
+def _load_satset_pay():
+    """Dynamically loads SATSET-PAY database and QRIS engine modules safely without namespace collision"""
+    import sys
+    import importlib.util
+    satset_pay_dir = "/etc/satset/satset-pay"
+    if not os.path.exists(satset_pay_dir):
+        satset_pay_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "satset-pay")
+
+    db_file = os.path.join(satset_pay_dir, "database.py")
+    eng_file = os.path.join(satset_pay_dir, "qris_engine.py")
+
+    if not os.path.exists(db_file) or not os.path.exists(eng_file):
+        return None, None
+
+    if "satset_pay_qris_engine" not in sys.modules:
+        spec_eng = importlib.util.spec_from_file_location("satset_pay_qris_engine", eng_file)
+        eng_mod = importlib.util.module_from_spec(spec_eng)
+        sys.modules["satset_pay_qris_engine"] = eng_mod
+        spec_eng.loader.exec_module(eng_mod)
+    else:
+        eng_mod = sys.modules["satset_pay_qris_engine"]
+
+    if "satset_pay_database" not in sys.modules:
+        spec_db = importlib.util.spec_from_file_location("satset_pay_database", db_file)
+        db_mod = importlib.util.module_from_spec(spec_db)
+        sys.modules["satset_pay_database"] = db_mod
+        spec_db.loader.exec_module(db_mod)
+        try:
+            db_mod.init_db()
+        except Exception:
+            pass
+    else:
+        db_mod = sys.modules["satset_pay_database"]
+
+    return db_mod, eng_mod
+
+def _create_qris_satset_pay(order_id: str, amount: int, cfg: dict) -> dict:
+    """Creates QRIS payment via local SATSET-PAY engine or HTTP fallback"""
+    # 1. Try local direct database/engine call
+    try:
+        pay_db, qris_engine = _load_satset_pay()
+        if pay_db and qris_engine:
+            merchants = pay_db.get_all_merchants()
+            merchant_id = merchants[0]["id"] if merchants else 1
+
+            inv = pay_db.create_invoice(
+                merchant_id=merchant_id,
+                order_id=str(order_id),
+                amount_original=int(amount),
+                customer_name="Telegram User"
+            )
+            static_qris = pay_db.get_setting("static_qris", "")
+            qris_string = inv.get("qris_string")
+            if not qris_string and static_qris:
+                try:
+                    qris_string = qris_engine.make_dynamic_qris(static_qris, inv["amount_total"])
+                    pay_db.update_invoice_qris(inv["id"], qris_string)
+                except Exception:
+                    qris_string = static_qris
+
+            qr_url = qris_engine.generate_qr_data_uri(qris_string or f"PAY:{inv['invoice_no']}:{inv['amount_total']}")
+            return {
+                "success": True,
+                "order_id": str(order_id),
+                "amount": int(amount),
+                "total_payment": int(inv["amount_total"]),
+                "fee": int(inv["unique_code"]),
+                "qr_url": qr_url,
+                "qr_string": qris_string or "",
+                "expired_at": inv.get("expired_at", ""),
+                "raw": inv
+            }
+    except Exception as e:
+        logger.warning(f"Local SATSET-PAY direct execution failed, falling back to HTTP: {e}")
+
+    # 2. HTTP Fallback to SATSET-PAY daemon
+    base_url = cfg.get("SATSET_PAY_URL", "http://127.0.0.1:8088").rstrip("/")
+    api_key = cfg.get("SATSET_PAY_API_KEY", "")
+    try:
+        resp = requests.post(
+            f"{base_url}/api/v1/order/create",
+            headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+            json={"order_id": str(order_id), "amount": int(amount)},
+            timeout=8
+        )
+        if resp.status_code == 201:
+            data = resp.json()
+            return {
+                "success": True,
+                "order_id": str(order_id),
+                "amount": int(amount),
+                "total_payment": int(data.get("amount_total", amount)),
+                "fee": int(data.get("unique_code", 0)),
+                "qr_url": data.get("checkout_url", ""),
+                "qr_string": data.get("qris_string", ""),
+                "expired_at": data.get("expired_at", ""),
+                "raw": data
+            }
+        else:
+            return {"success": False, "error": f"SATSET-PAY error: {resp.text}"}
+    except Exception as e:
+        return {"success": False, "error": f"Gagal menghubungi SATSET-PAY: {e}"}
+
+def _check_transaction_satset_pay(order_id: str, cfg: dict) -> dict:
+    """Checks invoice status via local SATSET-PAY database or HTTP fallback"""
+    # 1. Try local direct database lookup
+    try:
+        pay_db, _ = _load_satset_pay()
+        if pay_db:
+            inv = pay_db.get_invoice_by_merchant_and_order(1, str(order_id))
+            if inv:
+                st = inv.get("status", "pending")
+                return {
+                    "status": st,
+                    "order_id": str(order_id),
+                    "amount": inv.get("amount_original", 0),
+                    "total_payment": inv.get("amount_total", 0),
+                    "raw": inv
+                }
+    except Exception:
+        pass
+
+    # 2. HTTP Fallback
+    base_url = cfg.get("SATSET_PAY_URL", "http://127.0.0.1:8088").rstrip("/")
+    api_key = cfg.get("SATSET_PAY_API_KEY", "")
+    try:
+        resp = requests.get(
+            f"{base_url}/api/v1/order/{order_id}",
+            headers={"X-API-Key": api_key},
+            timeout=5
+        )
+        if resp.status_code == 200:
+            data = resp.json().get("order", {})
+            return {
+                "status": data.get("payment_status", "pending"),
+                "order_id": str(order_id),
+                "amount": data.get("amount_original", 0),
+                "total_payment": data.get("amount_total", 0),
+                "raw": data
+            }
+    except Exception:
+        pass
+
+    return {"status": "pending", "order_id": str(order_id)}
