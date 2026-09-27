@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pembayaran {{ invoice.invoice_no }} - {{ brand_name }}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+    [x-cloak] { display: none !important; }
+  </style>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col items-center justify-center p-3 sm:p-6"
+      x-data="checkoutApp('{{ invoice.invoice_no }}', '{{ invoice.status }}', '{{ invoice.expired_at }}')"
+      x-init="initTimer()">
+
+  <div class="w-full max-w-md my-auto">
+
+    <!-- Card Checkout Container -->
+    <div class="bg-slate-900/95 border border-slate-800 rounded-3xl p-6 sm:p-7 shadow-2xl backdrop-blur-xl relative overflow-hidden">
+      <!-- Glow background -->
+      <div class="absolute -top-20 -right-20 w-44 h-44 bg-indigo-500/15 rounded-full blur-3xl pointer-events-none"></div>
+      <div class="absolute -bottom-20 -left-20 w-44 h-44 bg-emerald-500/15 rounded-full blur-3xl pointer-events-none"></div>
+
+      <!-- Header: Logo & Merchant Name -->
+      <div class="flex items-center justify-between border-b border-slate-800/80 pb-4 mb-5">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 to-emerald-400 text-white flex items-center justify-center font-bold text-sm shadow-sm">
+            ⚡
+          </div>
+          <div>
+            <div class="font-bold text-sm text-white tracking-tight">{{ invoice.merchant_name or brand_name }}</div>
+            <div class="text-[11px] text-slate-400 font-mono">{{ invoice.order_id }}</div>
+          </div>
+        </div>
+        <div class="flex items-center">
+          <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Logo_QRIS.svg/320px-Logo_QRIS.svg.png" alt="QRIS" class="h-6 object-contain filter invert opacity-90">
+        </div>
+      </div>
+
+      <!-- State 1: PENDING -->
+      <div x-show="status === 'pending'" x-cloak>
+        <!-- Timer Banner -->
+        <div class="flex items-center justify-between p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 mb-5 text-xs">
+          <div class="flex items-center gap-2 text-amber-300 font-medium">
+            <span>⏳</span>
+            <span>Batas Waktu Bayar:</span>
+          </div>
+          <div class="font-mono font-bold text-amber-400 text-sm tracking-wide" x-text="countdownText">
+            --:--
+          </div>
+        </div>
+
+        <!-- QR Code Container -->
+        <div class="flex flex-col items-center justify-center bg-white p-5 rounded-2xl shadow-inner mb-5 relative group">
+          <div class="w-56 h-56 flex items-center justify-center">
+            <img src="{{ qr_data_uri }}" alt="QRIS Barcode" class="w-full h-full object-contain">
+          </div>
+          <div class="text-[10px] text-slate-500 uppercase tracking-widest font-semibold mt-2">
+            Pindai dengan Semua Bank & E-Wallet
+          </div>
+        </div>
+
+        <!-- Total Tagihan & Kode Unik -->
+        <div class="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 mb-5 space-y-2">
+          <div class="flex justify-between text-xs text-slate-400">
+            <span>Tagihan Pokok</span>
+            <span class="font-mono">Rp {{ "{:,}".format(invoice.amount_original) }}</span>
+          </div>
+          <div class="flex justify-between text-xs text-amber-400">
+            <span>Kode Verifikasi Otomatis</span>
+            <span class="font-mono font-bold">+Rp {{ invoice.unique_code }}</span>
+          </div>
+          <div class="border-t border-slate-800 pt-2 flex items-center justify-between">
+            <div class="text-xs font-semibold text-slate-300">Total Pembayaran</div>
+            <div class="text-xl font-extrabold text-emerald-400 font-mono">
+              Rp {{ "{:,}".format(invoice.amount_total) }}
+            </div>
+          </div>
+        </div>
+
+        <!-- Tombol Salin Nominal -->
+        <div class="mb-5">
+          <button @click="copyAmount('{{ invoice.amount_total }}')"
+                  class="w-full py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-[0.99] text-slate-200 text-xs font-bold transition flex items-center justify-center gap-2 border border-slate-700">
+            <span>📋</span>
+            <span x-text="copied ? '✓ Berhasil Disalin!' : 'Salin Nominal (Rp {{ invoice.amount_total }})'"></span>
+          </button>
+        </div>
+
+        <!-- Status Polling Indicator -->
+        <div class="flex items-center justify-center gap-2.5 text-xs text-slate-400 mb-6">
+          <span class="relative flex h-2.5 w-2.5">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+          </span>
+          <span>Mengecek pembayaran otomatis...</span>
+        </div>
+
+        <!-- Petunjuk Pembayaran -->
+        <div class="text-xs text-slate-400 space-y-2 border-t border-slate-800/80 pt-4">
+          <div class="font-bold text-slate-300">Cara Bayar:</div>
+          <ol class="list-decimal pl-4 space-y-1 text-[11px] leading-relaxed">
+            <li>Buka BCA Mobile, Livin Mandiri, BRImo, GoPay, Shopee, DANA, atau OVO.</li>
+            <li>Pilih menu <b>Scan / Bayar QRIS</b>.</li>
+            <li>Scan QR di atas, pastikan nominal transfer tepat <b>Rp {{ "{:,}".format(invoice.amount_total) }}</b>.</li>
+            <li>Konfirmasi & bayar. Halaman ini akan otomatis berganti sukses!</li>
+          </ol>
+        </div>
+      </div>
+
+      <!-- State 2: COMPLETED (SUKSES) -->
+      <div x-show="status === 'completed'" x-cloak class="py-8 text-center space-y-4">
+        <div class="w-20 h-20 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full flex items-center justify-center text-4xl mx-auto shadow-lg shadow-emerald-500/20 animate-bounce">
+          ✓
+        </div>
+        <div>
+          <h2 class="text-2xl font-extrabold text-white">PEMBAYARAN BERHASIL!</h2>
+          <p class="text-xs text-emerald-400 mt-1">Transaksi Anda telah diverifikasi oleh sistem.</p>
+        </div>
+        <div class="bg-slate-950 p-4 rounded-2xl border border-slate-800 text-xs space-y-1 font-mono text-slate-300">
+          <div>Invoice: {{ invoice.invoice_no }}</div>
+          <div>Total: Rp {{ "{:,}".format(invoice.amount_total) }}</div>
+          <div class="text-slate-500 text-[10px]">Terima kasih telah melakukan pembayaran!</div>
+        </div>
+        <div class="pt-4">
+          <button onclick="window.close()" class="px-6 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white transition">
+            Tutup Halaman
+          </button>
+        </div>
+      </div>
+
+      <!-- State 3: EXPIRED -->
+      <div x-show="status === 'expired'" x-cloak class="py-8 text-center space-y-4">
+        <div class="w-16 h-16 bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-full flex items-center justify-center text-3xl mx-auto">
+          ✕
+        </div>
+        <div>
+          <h2 class="text-xl font-bold text-white">Invoice Kadaluarsa</h2>
+          <p class="text-xs text-slate-400 mt-1">Batas waktu pembayaran untuk transaksi ini telah habis.</p>
+        </div>
+        <p class="text-xs text-slate-500">Silakan kembali ke aplikasi/bot untuk membuat pesanan baru.</p>
+      </div>
+
+    </div>
+
+    <!-- Footer -->
+    <div class="text-center text-[11px] text-slate-500 mt-5">
+      Didukung oleh {{ brand_name }} &bull; Transaksi Terenkripsi
+    </div>
+
+  </div>
+
+  <script>
+    function checkoutApp(invoiceNo, initialStatus, expiredAtStr) {
+      return {
+        invoiceNo: invoiceNo,
+        status: initialStatus,
+        expiredAt: new Date(expiredAtStr.replace(' ', 'T')).getTime(),
+        countdownText: '--:--',
+        copied: false,
+        pollInterval: null,
+        timerInterval: null,
+
+        initTimer() {
+          if (this.status !== 'pending') return;
+
+          // 1. Countdown update
+          const updateCountdown = () => {
+            const now = new Date().getTime();
+            const distance = this.expiredAt - now;
+            if (distance <= 0) {
+              this.countdownText = '00:00';
+              this.status = 'expired';
+              clearInterval(this.timerInterval);
+              clearInterval(this.pollInterval);
+              return;
+            }
+            const mins = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+            const secs = Math.floor((distance % (1000 * 60)) / 1000);
+            this.countdownText = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+          };
+
+          updateCountdown();
+          this.timerInterval = setInterval(updateCountdown, 1000);
+
+          // 2. Poll status every 2.5 seconds
+          this.pollInterval = setInterval(() => {
+            if (this.status !== 'pending') {
+              clearInterval(this.pollInterval);
+              return;
+            }
+            fetch(`/api/v1/invoice/${this.invoiceNo}/status`)
+              .then(res => res.json())
+              .then(data => {
+                if (data.status === 'completed') {
+                  this.status = 'completed';
+                  clearInterval(this.pollInterval);
+                  clearInterval(this.timerInterval);
+                } else if (data.status === 'expired') {
+                  this.status = 'expired';
+                  clearInterval(this.pollInterval);
+                  clearInterval(this.timerInterval);
+                }
+              })
+              .catch(() => {});
+          }, 2500);
+        },
+
+        copyAmount(amount) {
+          navigator.clipboard.writeText(amount);
+          this.copied = true;
+          setTimeout(() => { this.copied = false; }, 2500);
+        }
+      };
+    }
+  </script>
+</body>
+</html>

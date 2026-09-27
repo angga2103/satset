@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard - SATSET-PAY Gateway</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    [x-cloak] { display: none !important; }
+  </style>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen" x-data="{ tab: 'invoices', modalMerchant: false }">
+
+  <!-- Top Navigation Bar -->
+  <header class="bg-slate-900/80 border-b border-slate-800 sticky top-0 z-40 backdrop-blur-xl">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-emerald-400 text-white flex items-center justify-center font-extrabold text-xl shadow-md shadow-indigo-500/20">
+          ⚡
+        </div>
+        <div>
+          <div class="font-extrabold text-base tracking-tight text-white flex items-center gap-2">
+            <span>SATSET-PAY</span>
+            <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">LIVE</span>
+          </div>
+          <p class="text-xs text-slate-400">Micro QRIS Payment Gateway</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-4">
+        <a href="/admin/logout" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition">
+          Logout 🚪
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+    <!-- KPI / Metric Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
+      <!-- Card 1: Omset Hari Ini -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 relative overflow-hidden shadow-sm">
+        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Omset Hari Ini</div>
+        <div class="text-2xl font-extrabold text-emerald-400">Rp {{ "{:,}".format(stats.revenue_today) }}</div>
+        <div class="text-xs text-slate-500 mt-2 flex items-center gap-1.5">
+          <span class="inline-block w-2 h-2 rounded-full bg-emerald-500"></span> Real-time settlement
+        </div>
+      </div>
+
+      <!-- Card 2: Omset Bulan Ini -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 relative overflow-hidden shadow-sm">
+        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Omset Bulan Ini</div>
+        <div class="text-2xl font-extrabold text-indigo-400">Rp {{ "{:,}".format(stats.revenue_month) }}</div>
+        <div class="text-xs text-slate-500 mt-2">
+          Total omset: Rp {{ "{:,}".format(stats.revenue_all) }}
+        </div>
+      </div>
+
+      <!-- Card 3: Total Transaksi Sukses -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 relative overflow-hidden shadow-sm">
+        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Invoice Sukses</div>
+        <div class="text-2xl font-extrabold text-white">{{ stats.invoices_completed }} <span class="text-xs text-slate-500 font-normal">/ {{ stats.total_invoices }}</span></div>
+        <div class="text-xs text-emerald-400 mt-2">
+          ⏳ {{ stats.invoices_pending }} pending &bull; ❌ {{ stats.invoices_expired }} expired
+        </div>
+      </div>
+
+      <!-- Card 4: Mutasi Listener Masuk -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 relative overflow-hidden shadow-sm">
+        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Mutasi Diterima</div>
+        <div class="text-2xl font-extrabold text-amber-400">{{ stats.total_mutations }}</div>
+        <div class="text-xs text-slate-500 mt-2">
+          GoBiz, Shopee, DANA Listener
+        </div>
+      </div>
+    </div>
+
+    <!-- Alert / QRIS Reminder if empty -->
+    {% if not settings.static_qris %}
+    <div class="mb-8 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-amber-300 text-sm">
+      <div class="flex items-center gap-3">
+        <span class="text-2xl">⚠️</span>
+        <div>
+          <div class="font-bold">String QRIS Statis Belum Dikonfigurasi!</div>
+          <div class="text-xs text-amber-400/80">Sistem membutuhkan string QRIS GoPay/Shopee/DANA Anda untuk menghasilkan barcode dinamis otomatis.</div>
+        </div>
+      </div>
+      <button @click="tab = 'settings'" class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs transition">
+        Atur Sekarang
+      </button>
+    </div>
+    {% endif %}
+
+    <!-- Navigation Tabs -->
+    <div class="flex items-center gap-2 border-b border-slate-800 pb-4 mb-6 overflow-x-auto text-sm">
+      <button @click="tab = 'invoices'" :class="tab === 'invoices' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'" class="px-4 py-2 rounded-xl font-medium transition whitespace-nowrap">
+        🧾 Invoices ({{ invoices|length }})
+      </button>
+      <button @click="tab = 'mutations'" :class="tab === 'mutations' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'" class="px-4 py-2 rounded-xl font-medium transition whitespace-nowrap">
+        📱 Log Mutasi Masuk ({{ mutations|length }})
+      </button>
+      <button @click="tab = 'merchants'" :class="tab === 'merchants' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'" class="px-4 py-2 rounded-xl font-medium transition whitespace-nowrap">
+        🔑 Kelola Merchant & API Key
+      </button>
+      <button @click="tab = 'settings'" :class="tab === 'settings' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'" class="px-4 py-2 rounded-xl font-medium transition whitespace-nowrap">
+        ⚙️ Pengaturan QRIS
+      </button>
+      <button @click="tab = 'simulator'" :class="tab === 'simulator' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'" class="px-4 py-2 rounded-xl font-medium transition whitespace-nowrap">
+        🧪 Simulator Webhook
+      </button>
+      <button @click="tab = 'docs'" :class="tab === 'docs' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'" class="px-4 py-2 rounded-xl font-medium transition whitespace-nowrap">
+        📚 Panduan HP Listener
+      </button>
+    </div>
+
+    <!-- TAB 1: INVOICES -->
+    <div x-show="tab === 'invoices'" x-cloak>
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+        <div class="p-5 border-b border-slate-800 flex items-center justify-between">
+          <h2 class="font-bold text-base text-white">Daftar Transaksi Terbaru</h2>
+          <span class="text-xs text-slate-400">Menampilkan 20 transaksi terakhir</span>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm text-slate-300">
+            <thead class="bg-slate-950/60 text-xs uppercase text-slate-400 font-semibold border-b border-slate-800">
+              <tr>
+                <th class="px-5 py-3.5">Invoice</th>
+                <th class="px-5 py-3.5">Order ID</th>
+                <th class="px-5 py-3.5">Merchant</th>
+                <th class="px-5 py-3.5">Nominal (Total)</th>
+                <th class="px-5 py-3.5">Kode Unik</th>
+                <th class="px-5 py-3.5">Status</th>
+                <th class="px-5 py-3.5">Waktu</th>
+                <th class="px-5 py-3.5 text-right">Aksi</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+              {% for inv in invoices %}
+              <tr class="hover:bg-slate-800/40 transition">
+                <td class="px-5 py-4 font-mono font-medium text-white text-xs">
+                  <a href="/pay/{{ inv.invoice_no }}" target="_blank" class="text-indigo-400 hover:underline">
+                    {{ inv.invoice_no }}
+                  </a>
+                </td>
+                <td class="px-5 py-4 font-mono text-xs">{{ inv.order_id }}</td>
+                <td class="px-5 py-4 text-xs font-semibold text-slate-200">{{ inv.merchant_name or 'Default' }}</td>
+                <td class="px-5 py-4 font-bold text-white">
+                  Rp {{ "{:,}".format(inv.amount_total) }}
+                </td>
+                <td class="px-5 py-4 text-xs font-mono text-amber-400 font-bold">+{{ inv.unique_code }}</td>
+                <td class="px-5 py-4">
+                  {% if inv.status == 'completed' %}
+                  <span class="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    LUNAS
+                  </span>
+                  {% elif inv.status == 'pending' %}
+                  <span class="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                    PENDING
+                  </span>
+                  {% else %}
+                  <span class="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-slate-800 text-slate-400 border border-slate-700">
+                    EXPIRED
+                  </span>
+                  {% endif %}
+                </td>
+                <td class="px-5 py-4 text-xs text-slate-400 whitespace-nowrap">{{ inv.created_at }}</td>
+                <td class="px-5 py-4 text-right">
+                  <a href="/pay/{{ inv.invoice_no }}" target="_blank" class="px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white text-xs font-semibold transition">
+                    Lihat Checkout ↗
+                  </a>
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="8" class="px-5 py-8 text-center text-slate-500 text-xs">
+                  Belum ada transaksi. Silakan buat transaksi dari Bot Store atau API.
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: MUTATIONS LOG -->
+    <div x-show="tab === 'mutations'" x-cloak>
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+        <div class="p-5 border-b border-slate-800 flex items-center justify-between">
+          <h2 class="font-bold text-base text-white">Log Notifikasi Masuk (GoBiz, Shopee, DANA)</h2>
+          <span class="text-xs text-slate-400">Sinkronisasi otomatis dari HP Listener</span>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm text-slate-300">
+            <thead class="bg-slate-950/60 text-xs uppercase text-slate-400 font-semibold border-b border-slate-800">
+              <tr>
+                <th class="px-5 py-3.5">ID</th>
+                <th class="px-5 py-3.5">Sumber</th>
+                <th class="px-5 py-3.5">Nominal Masuk</th>
+                <th class="px-5 py-3.5">Pengirim</th>
+                <th class="px-5 py-3.5">Status Matching</th>
+                <th class="px-5 py-3.5">Teks Raw Notifikasi</th>
+                <th class="px-5 py-3.5">Waktu</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+              {% for m in mutations %}
+              <tr class="hover:bg-slate-800/40 transition">
+                <td class="px-5 py-4 font-mono text-xs">{{ m.id }}</td>
+                <td class="px-5 py-4">
+                  {% if m.source == 'gobiz' %}
+                  <span class="px-2 py-0.5 rounded text-[11px] font-bold bg-green-500/10 text-green-400 border border-green-500/20">GoBiz (GoPay)</span>
+                  {% elif m.source == 'shopee' %}
+                  <span class="px-2 py-0.5 rounded text-[11px] font-bold bg-orange-500/10 text-orange-400 border border-orange-500/20">ShopeePay</span>
+                  {% elif m.source == 'dana' %}
+                  <span class="px-2 py-0.5 rounded text-[11px] font-bold bg-sky-500/10 text-sky-400 border border-sky-500/20">DANA Bisnis</span>
+                  {% else %}
+                  <span class="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-800 text-slate-300">{{ m.source }}</span>
+                  {% endif %}
+                </td>
+                <td class="px-5 py-4 font-bold text-emerald-400">Rp {{ "{:,}".format(m.amount) }}</td>
+                <td class="px-5 py-4 text-xs font-semibold text-slate-300">{{ m.sender or '-' }}</td>
+                <td class="px-5 py-4">
+                  {% if m.is_matched %}
+                  <span class="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1 w-max">
+                    ✓ Match: {{ m.invoice_no }}
+                  </span>
+                  {% else %}
+                  <span class="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-slate-800 text-slate-400 border border-slate-700 w-max">
+                    Belum Match
+                  </span>
+                  {% endif %}
+                </td>
+                <td class="px-5 py-4 text-xs text-slate-400 max-w-xs truncate" title="{{ m.raw_text }}">{{ m.raw_text }}</td>
+                <td class="px-5 py-4 text-xs text-slate-400 whitespace-nowrap">{{ m.created_at }}</td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="7" class="px-5 py-8 text-center text-slate-500 text-xs">
+                  Belum ada notifikasi mutasi masuk dari HP Listener.
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: MERCHANTS & API KEYS -->
+    <div x-show="tab === 'merchants'" x-cloak>
+      <div class="flex items-center justify-between mb-5">
+        <div>
+          <h2 class="text-lg font-bold text-white">Manajemen Merchant & API Key</h2>
+          <p class="text-xs text-slate-400">Gunakan API Key ini untuk mengintegrasikan bot Telegram atau website lain ke gateway ini.</p>
+        </div>
+        <button @click="modalMerchant = true" class="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition shadow-md shadow-indigo-600/30">
+          + Tambah Merchant Baru
+        </button>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+        {% for merch in merchants %}
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 relative">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-base font-bold text-white">{{ merch.name }}</h3>
+            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold {% if merch.is_active %}bg-emerald-500/10 text-emerald-400 border border-emerald-500/20{% else %}bg-rose-500/10 text-rose-400{% endif %}">
+              {{ 'AKTIF' if merch.is_active else 'NONAKTIF' }}
+            </span>
+          </div>
+
+          <div class="space-y-3 text-xs">
+            <div>
+              <div class="text-slate-500 font-semibold mb-1">API Key:</div>
+              <div class="flex items-center gap-2">
+                <input type="text" readonly value="{{ merch.api_key }}" class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-300 font-mono text-[11px]">
+                <button onclick="navigator.clipboard.writeText('{{ merch.api_key }}'); alert('API Key disalin!')" class="px-2.5 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-200">Copy</button>
+              </div>
+            </div>
+
+            <div>
+              <div class="text-slate-500 font-semibold mb-1">Secret Key:</div>
+              <div class="flex items-center gap-2">
+                <input type="text" readonly value="{{ merch.secret_key }}" class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-300 font-mono text-[11px]">
+                <button onclick="navigator.clipboard.writeText('{{ merch.secret_key }}'); alert('Secret Key disalin!')" class="px-2.5 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-200">Copy</button>
+              </div>
+            </div>
+
+            <div>
+              <div class="text-slate-500 font-semibold mb-1">Webhook Callback URL:</div>
+              <div class="text-slate-300 font-mono text-[11px] p-2 bg-slate-950 rounded-lg border border-slate-800 truncate">
+                {{ merch.webhook_url or 'Belum diatur' }}
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- MODAL TAMBAH MERCHANT -->
+    <div x-show="modalMerchant" x-cloak class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl relative" @click.outside="modalMerchant = false">
+        <h3 class="text-lg font-bold text-white mb-2">Tambah Merchant Baru</h3>
+        <p class="text-xs text-slate-400 mb-5">Buat kredensial API untuk aplikasi bot atau website toko Anda.</p>
+
+        <form method="POST" action="/admin/merchants/create" class="space-y-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-400 uppercase mb-1">Nama Merchant / Aplikasi</label>
+            <input type="text" name="name" required placeholder="Contoh: Toko VPN VIP" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:border-indigo-500 focus:outline-none">
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-400 uppercase mb-1">Webhook Callback URL (Opsional)</label>
+            <input type="url" name="webhook_url" placeholder="https://domainanda.com/api/payment/callback" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:border-indigo-500 focus:outline-none">
+          </div>
+
+          <div class="flex items-center justify-end gap-3 pt-4">
+            <button type="button" @click="modalMerchant = false" class="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white">Batal</button>
+            <button type="submit" class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold">Simpan Merchant</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- TAB 4: PENGATURAN QRIS & SISTEM -->
+    <div x-show="tab === 'settings'" x-cloak>
+      <div class="max-w-3xl bg-slate-900 border border-slate-800 rounded-2xl p-6">
+        <h2 class="text-lg font-bold text-white mb-2">Pengaturan QRIS & Gateway</h2>
+        <p class="text-xs text-slate-400 mb-6">Konfigurasi string QRIS statis utama yang digunakan untuk generate barcode dinamis ke pembeli.</p>
+
+        <form method="POST" action="/admin/settings/save" class="space-y-5">
+          <div>
+            <label class="block text-xs font-semibold text-slate-400 uppercase mb-2">
+              String QRIS Statis Utama (EMVCo)
+            </label>
+            <textarea name="static_qris" rows="4" placeholder="00020101021126600016ID.CO.GOPAY.WWW..."
+                      class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none">{{ settings.static_qris }}</textarea>
+            <p class="text-[11px] text-slate-500 mt-1.5">
+              💡 <b>Cara mendapatkan:</b> Scan gambar QRIS GoPay/Shopee/DANA Anda menggunakan aplikasi barcode scanner di HP, lalu salin teks panjangnya ke sini.
+            </p>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label class="block text-xs font-semibold text-slate-400 uppercase mb-2">Timeout Invoice</label>
+              <div class="flex items-center">
+                <input type="number" name="invoice_timeout_minutes" value="{{ settings.invoice_timeout_minutes or 10 }}" min="3" max="60"
+                       class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:border-indigo-500 focus:outline-none">
+                <span class="ml-2 text-xs text-slate-400">Menit</span>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-400 uppercase mb-2">Kode Unik Minimal</label>
+              <input type="number" name="unique_code_min" value="{{ settings.unique_code_min or 1 }}" min="1" max="999"
+                     class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-400 uppercase mb-2">Kode Unik Maksimal</label>
+              <input type="number" name="unique_code_max" value="{{ settings.unique_code_max or 499 }}" min="1" max="999"
+                     class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-400 uppercase mb-2">
+              Webhook Secret (HP Listener Auth)
+            </label>
+            <input type="text" name="webhook_secret" value="{{ settings.webhook_secret }}"
+                   class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none">
+            <p class="text-[11px] text-slate-500 mt-1">Gunakan secret ini di header atau payload MacroDroid HP Anda.</p>
+          </div>
+
+          <div class="pt-4 border-t border-slate-800 flex justify-end">
+            <button type="submit" class="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md">
+              Simpan Perubahan
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- TAB 5: SIMULATOR WEBHOOK -->
+    <div x-show="tab === 'simulator'" x-cloak>
+      <div class="max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl p-6">
+        <h2 class="text-lg font-bold text-white mb-2">🧪 Simulator Notifikasi HP Listener</h2>
+        <p class="text-xs text-slate-400 mb-6">Uji coba apakah matching engine berhasil menyelesaikan invoice pending saat ada nominal masuk tanpa perlu HP sungguhan.</p>
+
+        <form method="POST" action="/admin/simulator/trigger" class="space-y-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-400 uppercase mb-1">Aplikasi Sumber</label>
+            <select name="source" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs">
+              <option value="gobiz">GoBiz (GoPay)</option>
+              <option value="shopee">Shopee Partner (ShopeePay)</option>
+              <option value="dana">DANA Bisnis</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-400 uppercase mb-1">Nominal Transfer Masuk (Harus Sama Persis dengan Total Invoice)</label>
+            <input type="number" name="amount" required placeholder="Contoh: 10147" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm">
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-400 uppercase mb-1">Nama Pengirim</label>
+            <input type="text" name="sender" value="Tester Otomatis" class="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm">
+          </div>
+
+          <button type="submit" class="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md">
+            Kirim Simulasi Transfer Masuk ⚡
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- TAB 6: PANDUAN HP LISTENER -->
+    <div x-show="tab === 'docs'" x-cloak>
+      <div class="max-w-3xl bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
+        <div>
+          <h2 class="text-lg font-bold text-white mb-1">📱 Panduan Setting HP Android Listener (MacroDroid)</h2>
+          <p class="text-xs text-slate-400">Langkah mudah menghubungkan notifikasi GoBiz / Shopee / DANA di HP ke VPS SATSET-PAY.</p>
+        </div>
+
+        <div class="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3 text-xs text-slate-300">
+          <div class="font-bold text-indigo-400 text-sm">1. Install MacroDroid</div>
+          <p>Download aplikasi <b>MacroDroid - Device Automation</b> gratis dari Google Play Store di HP Android Anda.</p>
+          
+          <div class="font-bold text-indigo-400 text-sm pt-2">2. Buat Makro Baru</div>
+          <ul class="list-disc pl-5 space-y-1">
+            <li><b>Triggers:</b> Pilih <i>Notification</i> ➔ <i>Notification Received</i> ➔ Centang aplikasi <b>GoBiz</b>, <b>Shopee Partner</b>, atau <b>DANA</b>.</li>
+            <li><b>Actions:</b> Pilih <i>Connectivity</i> ➔ <i>HTTP Request</i>:
+              <div class="mt-2 p-3 bg-slate-900 rounded-lg font-mono text-[11px] space-y-1">
+                <div><b>Method:</b> POST</div>
+                <div><b>URL:</b> <span class="text-emerald-400">http://{{ request_host }}:8088/api/v1/webhook/listener</span></div>
+                <div><b>Content-Type:</b> application/json</div>
+                <div><b>Header:</b> X-Webhook-Secret: <span class="text-amber-400">{{ settings.webhook_secret }}</span></div>
+                <div><b>Body (JSON):</b></div>
+                <div class="text-slate-400">{ "package": "[package_name]", "title": "[notif_title]", "body": "[notif_body]" }</div>
+              </div>
+            </li>
+          </ul>
+
+          <div class="font-bold text-indigo-400 text-sm pt-2">3. Selesai!</div>
+          <p>Setiap ada pembeli yang transfer ke QRIS Anda, notifikasi di HP akan otomatis ditembakkan ke VPS dan invoice lunas seketika!</p>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</body>
+</html>
