@@ -333,6 +333,102 @@ if [ -x /etc/satset/venv/bin/pip ]; then
     /etc/satset/venv/bin/pip install -q -r /etc/satset/bot-store/requirements.txt 2>/dev/null || true
 fi
 
+# Sinkronkan SATSET-PAY (Micro QRIS Payment Gateway)
+info "Sinkronisasi SATSET-PAY (Micro QRIS Gateway)"
+mkdir -p /etc/satset/satset-pay/{parsers,templates}
+PAY_FILES=(app.py config.py database.py qris_engine.py requirements.txt install.sh macrodroid_guide.md README.md)
+for f in "${PAY_FILES[@]}"; do
+    wget -q -O "/etc/satset/satset-pay/$f" "$REPO_RAW/satset-pay/$f${CACHE_BUSTER}" 2>/dev/null || \
+    curl -fsSL -o "/etc/satset/satset-pay/$f" "$REPO_RAW/satset-pay/$f${CACHE_BUSTER}" 2>/dev/null || true
+done
+PAY_PARSER_FILES=(__init__.py gobiz.py shopee.py dana.py)
+for f in "${PAY_PARSER_FILES[@]}"; do
+    wget -q -O "/etc/satset/satset-pay/parsers/$f" "$REPO_RAW/satset-pay/parsers/$f${CACHE_BUSTER}" 2>/dev/null || \
+    curl -fsSL -o "/etc/satset/satset-pay/parsers/$f" "$REPO_RAW/satset-pay/parsers/$f${CACHE_BUSTER}" 2>/dev/null || true
+done
+PAY_TMPL_FILES=(login.html dashboard.html checkout.html)
+for f in "${PAY_TMPL_FILES[@]}"; do
+    wget -q -O "/etc/satset/satset-pay/templates/$f" "$REPO_RAW/satset-pay/templates/$f${CACHE_BUSTER}" 2>/dev/null || \
+    curl -fsSL -o "/etc/satset/satset-pay/templates/$f" "$REPO_RAW/satset-pay/templates/$f${CACHE_BUSTER}" 2>/dev/null || true
+done
+chmod +x /etc/satset/satset-pay/install.sh 2>/dev/null || true
+
+# Shortcut CLI satset-pay
+cat << 'EOFCLI' > /usr/local/sbin/satset-pay
+#!/bin/bash
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[1;36m'
+NC='\033[0m'
+
+IP_VPS=$(curl -4 -s --max-time 3 ipv4.icanhazip.com 2>/dev/null || hostname -I | awk '{print $1}')
+
+while true; do
+    clear
+    echo -e "${CYAN}====================================================${NC}"
+    echo -e "${GREEN}      SATSET-PAY: SELF-HOSTED QRIS GATEWAY          ${NC}"
+    echo -e "${CYAN}====================================================${NC}"
+    STATUS=$(systemctl is-active satset-pay 2>/dev/null || echo "inactive")
+    if [ "$STATUS" = "active" ]; then
+        echo -e "Status Service : ${GREEN}ACTIVE (Running on port 8088)${NC}"
+    else
+        echo -e "Status Service : ${RED}INACTIVE / STOPPED${NC}"
+    fi
+    echo -e "Dashboard Admin: ${YELLOW}http://${IP_VPS}:8088/admin${NC}"
+    echo -e "Webhook HP URL : ${YELLOW}http://${IP_VPS}:8088/api/v1/webhook/listener${NC}"
+    echo -e "${CYAN}====================================================${NC}"
+    echo -e " [1] Start / Restart Service"
+    echo -e " [2] Stop Service"
+    echo -e " [3] Lihat Live Log (journalctl)"
+    echo -e " [4] Lihat Transaksi Terakhir (SQLite)"
+    echo -e " [5] Lihat Mutasi Masuk (SQLite)"
+    echo -e " [6] Jalankan Ulang Installer"
+    echo -e " [0] Keluar"
+    echo -e "${CYAN}====================================================${NC}"
+    read -rp "Pilih menu [0-6]: " opt
+    case "$opt" in
+        1)
+            systemctl restart satset-pay
+            echo -e "${GREEN}Service berhasil direstart!${NC}"
+            sleep 1.5
+            ;;
+        2)
+            systemctl stop satset-pay
+            echo -e "${YELLOW}Service dihentikan.${NC}"
+            sleep 1.5
+            ;;
+        3)
+            journalctl -u satset-pay -f -n 50
+            ;;
+        4)
+            sqlite3 /etc/satset/satset-pay/satset_pay.db "SELECT id, invoice_no, order_id, amount_total, status, created_at FROM invoices ORDER BY id DESC LIMIT 10;" 2>/dev/null || echo "Belum ada database/transaksi."
+            read -rp "Tekan Enter untuk kembali..."
+            ;;
+        5)
+            sqlite3 /etc/satset/satset-pay/satset_pay.db "SELECT id, source, amount, is_matched, created_at FROM mutations ORDER BY id DESC LIMIT 10;" 2>/dev/null || echo "Belum ada mutasi."
+            read -rp "Tekan Enter untuk kembali..."
+            ;;
+        6)
+            bash /etc/satset/satset-pay/install.sh
+            read -rp "Tekan Enter untuk kembali..."
+            ;;
+        0)
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Pilihan tidak valid.${NC}"
+            sleep 1
+            ;;
+    esac
+done
+EOFCLI
+chmod +x /usr/local/sbin/satset-pay 2>/dev/null || true
+
+if systemctl is-active --quiet satset-pay 2>/dev/null; then
+    systemctl restart satset-pay 2>/dev/null || true
+fi
+
 # Terapkan TCP BBR Speed Booster & Firewall Anti-DDoS
 systemctl stop network-tune.service 2>/dev/null || true
 systemctl disable network-tune.service 2>/dev/null || true

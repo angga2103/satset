@@ -698,6 +698,19 @@ function memasang_menu(){
     wget -q -O /etc/satset/bot-store/install_store.sh "${REPO}bot-store/install_store.sh" || true
     chmod +x /etc/satset/bot-store/install_store.sh 2>/dev/null || true
 
+    # Pasang SATSET-PAY (Micro QRIS Gateway)
+    mkdir -p /etc/satset/satset-pay/{parsers,templates}
+    for f in app.py config.py database.py qris_engine.py requirements.txt install.sh macrodroid_guide.md README.md; do
+        wget -q -O "/etc/satset/satset-pay/$f" "${REPO}satset-pay/$f" || true
+    done
+    for f in __init__.py gobiz.py shopee.py dana.py; do
+        wget -q -O "/etc/satset/satset-pay/parsers/$f" "${REPO}satset-pay/parsers/$f" || true
+    done
+    for f in login.html dashboard.html checkout.html; do
+        wget -q -O "/etc/satset/satset-pay/templates/$f" "${REPO}satset-pay/templates/$f" || true
+    done
+    chmod +x /etc/satset/satset-pay/install.sh 2>/dev/null || true
+
     # Pasang SatSet Node Agent (Multi-VPS Cluster Engine)
     wget -q -O /usr/local/bin/satset-node "${REPO}files/satset-node.py" || true
     chmod +x /usr/local/bin/satset-node 2>/dev/null || true

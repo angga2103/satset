@@ -7,6 +7,9 @@ LOCAL_ENV = os.path.join(os.path.dirname(__file__), "bot.env")
 DEFAULT_CONFIG = {
     "BOT_TOKEN": "",
     "ADMIN_ID": "",
+    "PAYMENT_GATEWAY": "satset_pay",  # "satset_pay" (Direct QRIS Mas Angga) or "pakasir"
+    "SATSET_PAY_URL": "http://127.0.0.1:8088",
+    "SATSET_PAY_API_KEY": "",
     "PAKASIR_PROJECT_SLUG": "",
     "PAKASIR_API_KEY": "",
     "PRICE_MONTHLY": 8000,
