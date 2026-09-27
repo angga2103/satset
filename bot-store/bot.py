@@ -1414,7 +1414,7 @@ def callback_node_action(call):
     elif action_type == "delete_confirm":
         if node_id == 0:
             return
-        database.delete_node(node_id)
+        node_client.unregister_node_with_handshake(node_id)
         bot.answer_callback_query(call.id, f"Server {node_name} berhasil dihapus dari cluster.", show_alert=True)
         callback_admin_nodes_menu(call)
 
@@ -2140,39 +2140,36 @@ def handle_text_inputs(message):
         user_states.pop(user_id, None)
         if not is_admin(user_id):
             return
-        wait_msg = bot.send_message(user_id, "⏳ <i>Menguji koneksi ke server node cabang...</i>")
+        wait_msg = bot.send_message(user_id, "⏳ <i>Menguji koneksi & melakukan handshake ke server node cabang...</i>")
         try:
-            token_data = node_client.parse_connection_token(text)
-            host = token_data["host"]
-            port = token_data["port"]
-            api_key = token_data["api_key"]
-            default_name = token_data.get("name") or f"Node-{host}"
-
-            test_res = node_client.test_connection(host, port, api_key, timeout=7.0)
-            if test_res.get("status") != "success":
-                err = test_res.get("message", "Handshake gagal")
+            reg_res = node_client.register_node_with_handshake(text)
+            if reg_res.get("status") != "success":
+                err = reg_res.get("message", "Handshake gagal")
                 bot.edit_message_text(
                     f"❌ <b>Gagal Terhubung ke Node!</b>\n\n"
                     f"Detail Error: <code>{err}</code>\n\n"
-                    f"Pastikan service <code>satset-node</code> aktif di server cabang dan port <code>{port}</code> terbuka.",
+                    f"Pastikan service <code>satset-node</code> aktif di server cabang dan port <code>9090</code> terbuka.",
                     chat_id=user_id, message_id=wait_msg.message_id
                 )
                 return
 
-            node_id = database.add_node(name=default_name, host=host, port=port, api_key=api_key, flag="🌐")
-            ping_ms = test_res.get("ping_ms", 0)
-            domain = test_res.get("domain", host)
-            uptime = test_res.get("uptime", "-")
+            node_id = reg_res["node_id"]
+            name = reg_res["name"]
+            host = reg_res["host"]
+            port = reg_res["port"]
+            domain = reg_res["domain"]
+            ping_ms = reg_res["ping_ms"]
+            uptime = reg_res.get("uptime", "-")
 
             success_text = (
-                f"🎉 <b>SERVER NODE BERHASIL DITAMBAHKAN!</b>\n\n"
+                f"🎉 <b>SERVER NODE BERHASIL DIHUBUNGKAN!</b>\n\n"
                 f"ID Node  : <b>#{node_id}</b>\n"
-                f"Nama     : <b>{default_name}</b>\n"
+                f"Nama     : <b>{name}</b>\n"
                 f"Host/IP  : <code>{host}:{port}</code>\n"
                 f"Domain   : <code>{domain}</code>\n"
                 f"Latency  : <b>{ping_ms} ms</b>\n"
                 f"Uptime   : <b>{uptime}</b>\n\n"
-                f"Server ini sekarang otomatis aktif di Bot Store dan dapat dipilih oleh pelanggan!"
+                f"Status: Handshake dua arah sukses. VPS Cabang kini telah mengenali Master ini dan server otomatis aktif di Bot Store!"
             )
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton(f"⚙️ Kelola Server #{node_id}", callback_data=f"node_manage_{node_id}"))

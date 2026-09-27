@@ -586,3 +586,117 @@ def get_all_active_sessions() -> dict:
             "sessions": sess
         }
     return all_grouped
+
+CLUSTER_FILE = "/etc/satset/cluster.json"
+
+def sync_cluster_json_from_db():
+    try:
+        nodes = database.get_all_nodes()
+        os.makedirs(os.path.dirname(CLUSTER_FILE), exist_ok=True)
+        role = "master" if len(nodes) > 0 else "standalone"
+        cdata = {
+            "role": role,
+            "master": {},
+            "nodes": [
+                {
+                    "id": n["id"],
+                    "name": n.get("name", ""),
+                    "host": n.get("host", ""),
+                    "domain": n.get("domain") or n.get("host", ""),
+                    "port": int(n.get("port", 9090)),
+                    "api_key": n.get("api_key", ""),
+                    "flag": n.get("flag", "🌐"),
+                    "status": "online" if n.get("last_ping_ms", -1) >= 0 else "offline",
+                    "ping_ms": n.get("last_ping_ms", 0),
+                    "last_seen": n.get("last_seen", "")
+                }
+                for n in nodes
+            ]
+        }
+        with open(CLUSTER_FILE, "w", encoding="utf-8") as f:
+            json.dump(cdata, f, indent=2)
+        if os.name != "nt":
+            os.chmod(CLUSTER_FILE, 0o600)
+    except Exception:
+        pass
+
+def register_node_with_handshake(token_str: str) -> dict:
+    try:
+        token_data = parse_connection_token(token_str)
+    except Exception as e:
+        return {"status": "error", "message": f"Format token tidak valid: {e}"}
+
+    host = token_data["host"]
+    port = token_data["port"]
+    api_key = token_data["api_key"]
+    name = token_data.get("name") or f"Node-{host}"
+    flag = token_data.get("flag", "🌐")
+
+    for en in database.get_all_nodes():
+        if en.get("host") == host:
+            return {"status": "error", "message": f"Server dengan host {host} sudah ada di daftar node!"}
+
+    # 1. Test connection
+    test_res = test_connection(host, port, api_key, timeout=7.0)
+    if test_res.get("status") != "success":
+        err = test_res.get("message", "Timeout / Gagal terhubung")
+        return {"status": "error", "message": f"Gagal menghubungi node di {host}:{port}: {err}"}
+
+    # 2. Handshake: Register master info on remote node
+    my_ip = _get_local_ip()
+    my_domain = _get_local_domain()
+    temp_node = {"id": -1, "host": host, "port": port, "api_key": api_key}
+    handshake_payload = {
+        "master_host": my_ip,
+        "master_domain": my_domain,
+        "master_name": socket.gethostname()
+    }
+    h_res = request_node(temp_node, "/api/cluster/register_master", method="POST", data=handshake_payload, timeout=7.0)
+    if h_res.get("status") != "success":
+        err_h = h_res.get("message", "Handshake pendaftaran ditolak oleh VPS Cabang")
+        return {"status": "error", "message": f"Handshake gagal: {err_h}"}
+
+    node_domain = h_res.get("node_domain") or test_res.get("domain", host)
+    ping_ms = test_res.get("ping_ms", 0)
+    uptime = test_res.get("uptime", "-")
+
+    # 3. Add to database
+    node_id = database.add_node(name=name, host=host, port=port, api_key=api_key, flag=flag)
+    sys_info_json = json.dumps({
+        "hostname": test_res.get("hostname", name),
+        "domain": node_domain,
+        "uptime": uptime,
+        "cpu": test_res.get("cpu"),
+        "ram": test_res.get("ram"),
+        "disk": test_res.get("disk"),
+        "services": test_res.get("services")
+    })
+    database.update_node_status(node_id, is_active=1, ping_ms=ping_ms, system_info=sys_info_json)
+
+    # 4. Sync /etc/satset/cluster.json
+    sync_cluster_json_from_db()
+
+    return {
+        "status": "success",
+        "node_id": node_id,
+        "name": name,
+        "host": host,
+        "port": port,
+        "domain": node_domain,
+        "ping_ms": ping_ms,
+        "uptime": uptime
+    }
+
+def unregister_node_with_handshake(node_id: int) -> dict:
+    node = database.get_node_by_id(node_id)
+    if not node:
+        return {"status": "error", "message": "Node tidak ditemukan"}
+
+    try:
+        request_node(node, "/api/cluster/unregister_master", method="POST", data={}, timeout=4.0)
+    except Exception:
+        pass
+
+    database.delete_node(node_id)
+    sync_cluster_json_from_db()
+    return {"status": "success", "message": f"Node #{node_id} berhasil diputuskan"}

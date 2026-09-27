@@ -1,0 +1,262 @@
+#!/bin/bash
+clear
+y='\033[1;33m'
+BGX="\033[42m"
+CYAN="\033[96m"
+Putih="\033[97m"
+RED='\033[0;31m'
+NC='\033[0m'
+green='\033[0;32m'
+BIBlack='\033[1;90m'
+BIGreen='\033[1;92m'
+BIYellow='\033[1;93m'
+BIBlue='\033[1;94m'
+BIPurple='\033[1;95m'
+BICyan='\033[1;96m'
+BIWhite='\033[1;97m'
+UWhite='\033[4;37m'
+On_IPurple='\033[0;105m'
+On_IRed='\033[0;101m'
+IBlack='\033[0;90m'
+IGreen='\033[0;92m'
+IYellow='\033[0;93m'
+IBlue='\033[0;94m'
+IPurple='\033[0;95m'
+ICyan='\033[0;96m'
+IWhite='\033[0;97m'
+GREENBO='\033[1;32m'
+bgwhite='\e[40;97;1m'
+bgred='\e[41;97;1m'
+bggreen='\e[42;97;1m'
+bgyellow='\e[43;97;1m'
+bgmagenta='\e[45;97;1m'
+bgblue='\e[46;97;1m'
+bgblack='\e[47;30;1m'
+Lime='\e[38;5;155m'
+ungu="\e[38;5;99m"
+w='\033[97m'
+ORANGE='\033[0;34m'
+if [ -s /etc/xray/ipvps ] && ! grep -q ":" /etc/xray/ipvps 2>/dev/null; then
+    IPVPS=$(head -n1 /etc/xray/ipvps | tr -d ' \t\r\n')
+elif [ -s /root/ipvps ] && ! grep -q ":" /root/ipvps 2>/dev/null; then
+    IPVPS=$(head -n1 /root/ipvps | tr -d ' \t\r\n')
+else
+    IPVPS=$(curl -4 -s --max-time 2 ipv4.icanhazip.com 2>/dev/null || curl -4 -s --max-time 2 ifconfig.me 2>/dev/null || echo "Unknown")
+    [ -n "$IPVPS" ] && [ "$IPVPS" != "Unknown" ] && echo "$IPVPS" > /etc/xray/ipvps 2>/dev/null || true
+fi
+
+domain=$(head -n1 /etc/xray/domain 2>/dev/null | tr -d ' \t\r\n' || true)
+if [[ ! "$domain" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+    rec_domain=$(openssl x509 -in /etc/xray/xray.crt -noout -subject 2>/dev/null | grep -oP 'CN\s*=\s*\K[^\s,]+' | grep -v 'localhost' | head -n1 || true)
+    if [[ ! "$rec_domain" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]] && [ -d /root/.acme.sh ]; then
+        rec_domain=$(find /root/.acme.sh -maxdepth 1 -name "*.*" -type d 2>/dev/null | head -n1 | sed 's/.*\///; s/_ecc$//' || true)
+    fi
+    if [[ "$rec_domain" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        domain="$rec_domain"
+        echo "$domain" > /etc/xray/domain 2>/dev/null || true
+        echo "$domain" > /root/domain 2>/dev/null || true
+    else
+        domain="Domain belum diset"
+    fi
+fi
+ns=$(cat /etc/xray/dns 2>/dev/null || echo "unknown")
+
+if [ -s /etc/xray/isp ] && [ -s /etc/xray/city ]; then
+    ISP=$(cat /etc/xray/isp 2>/dev/null)
+    CITY_DISPLAY=$(cat /etc/xray/city 2>/dev/null)
+else
+    responden=$(curl -s --max-time 1.5 "http://ip-api.com/json/?fields=country,region,city,timezone,isp" 2>/dev/null || true)
+    ISP=$(echo "$responden" | jq -r '.isp // empty' 2>/dev/null || true)
+    CITY=$(echo "$responden" | jq -r '.city // empty' 2>/dev/null || true)
+    COUNTRY=$(echo "$responden" | jq -r '.country // empty' 2>/dev/null || true)
+
+    if [ -z "$ISP" ] || [ "$ISP" = "null" ]; then
+        ISP="Internet Service Provider"
+    fi
+    if [ -z "$CITY" ] || [ "$CITY" = "null" ]; then
+        CITY="Indonesia"
+    fi
+    if [ -n "$COUNTRY" ] && [ "$COUNTRY" != "null" ]; then
+        CITY_DISPLAY="$CITY, $COUNTRY"
+    else
+        CITY_DISPLAY="$CITY"
+    fi
+    echo "$ISP" > /etc/xray/isp 2>/dev/null || true
+    echo "$CITY_DISPLAY" > /etc/xray/city 2>/dev/null || true
+fi
+
+TIMEZONE=$(date +'%H:%M:%S')
+RAM=$(free -m | awk 'NR==2 {print $2}')
+USAGERAM=$(free -m | awk 'NR==2 {print $3}')
+MEMOFREE=$(free -m | awk 'NR==2{printf "%.2f%%", $3*100/$2 }')
+MODEL=$(grep -w PRETTY_NAME /etc/os-release | sed 's/PRETTY_NAME=//g' | tr -d '"')
+CORE=$(grep -c ^processor /proc/cpuinfo)
+DATEVPS=$(date +'%d-%m-%Y')
+uptime=$(uptime -p | cut -d " " -f 2-)
+today=$(date +'%Y-%m-%d')
+check_service() {
+  local service_name=$1
+  local service_status=$(systemctl is-active "$service_name" 2>/dev/null)
+  if [[ "$service_status" == "active" ]]; then
+    echo "${Lime}ON${NC}"
+  else
+    echo "${RED}OFF${NC}"
+  fi
+}
+calculate_cpu_load() {
+    LOADCPU=$(awk '{print $1}' /proc/loadavg 2>/dev/null || echo "0.00")
+}
+status_ssh=$(check_service ssh)
+status_ws=$(check_service ws-stunnel)
+status_xray=$(check_service xray)
+status_nginx=$(check_service nginx)
+status_dropbear=$(check_service dropbear)
+status_haproxy=$(check_service haproxy)
+
+ess="$(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' /etc/passwd | wc -l)"
+vms=$(grep -c '###' /etc/xray/config.json 2>/dev/null || echo 0)
+vls=$(grep -c '#&' /etc/xray/config.json 2>/dev/null || echo 0)
+trj=$(grep -c '#!' /etc/xray/config.json 2>/dev/null || echo 0)
+ss=$(grep -c '#@&' /etc/xray/config.json 2>/dev/null || echo 0)
+let ssx=ss/1
+sshx=$(grep -c "^### " /etc/ssh/.ssh.db 2>/dev/null || echo "0")
+let vmsx=vms/2
+let vlsx=vls/2
+let trjx=trj/2
+def_iface=$(ip -4 route show default 2>/dev/null | awk '{print $5}' | head -n1)
+[ -z "$def_iface" ] && def_iface=$(ip link 2>/dev/null | awk -F': ' '$2 !~ /^lo|^docker|^veth|^wg|^tun/ {print $2; exit}' | cut -d'@' -f1)
+if [ -n "$def_iface" ]; then
+    VN_RAW=$(vnstat -i "$def_iface" 2>/dev/null || vnstat 2>/dev/null || true)
+else
+    VN_RAW=$(vnstat 2>/dev/null || true)
+fi
+
+ttoday=$(echo "$VN_RAW" | grep -i "\btoday\b" | head -n1 | awk '{print $8" "$9}' | tr -d '\r\n')
+[ -z "$ttoday" ] && ttoday="0.00 MB"
+tyest=$(echo "$VN_RAW" | grep -i "\byesterday\b" | head -n1 | awk '{print $8" "$9}' | tr -d '\r\n')
+[ -z "$tyest" ] && tyest="0.00 MB"
+current_month=$(date +"%Y-%m")
+tmon=$(echo "$VN_RAW" | grep "$current_month" | head -n1 | awk '{print $8" "$9}' | tr -d '\r\n')
+if [ -z "$tmon" ]; then
+    tmon=$(vnstat -m 2>/dev/null | grep "$current_month" | head -n1 | awk '{print $8" "$9}' | tr -d '\r\n' || echo "0.00 MB")
+fi
+[ -z "$tmon" ] && tmon="0.00 MB"
+
+clear
+calculate_cpu_load
+echo -e "${BIWhite} ┌─────────────────────────────────────────────────────┐${NC}"
+echo -e "${BIWhite} │${bggreen}                  MAS ANSOR PROJECT                  ${NC}${BIWhite}│${NC}"
+echo -e "${BIWhite} ├─────────────────────────────────────────────────────┤${NC}"
+echo -e "${BIWhite} │${NC}  ${BIWhite}OS       : ${BIWhite}$MODEL${NC}"
+echo -e "${BIWhite} │${NC}  ${BIWhite}ISP      : ${BIWhite}$ISP${NC}"
+echo -e "${BIWhite} │${NC}  ${BIWhite}Kota     : ${BIWhite}$CITY_DISPLAY${NC}"
+echo -e "${BIWhite} │${NC}  ${BIWhite}RAM      : ${BIWhite}$RAM MB${NC}"
+echo -e "${BIWhite} │${NC}  ${BIWhite}CPU Load : ${BIWhite}$LOADCPU${NC}"
+echo -e "${BIWhite} │${NC}  ${BIWhite}Uptime   : ${BIWhite}$uptime${NC}"
+echo -e "${BIWhite} │${NC}  ${BIWhite}IP VPS   : ${BIWhite}$IPVPS${NC}"
+echo -e "${BIWhite} │${NC}  ${BIWhite}Waktu    : ${BIWhite}$TIMEZONE WIB${NC}"
+echo -e "${BIWhite} │${NC}  ${BIWhite}Domain   : ${BIWhite}$domain${NC}"
+echo -e "${BIWhite} ├─────────────────────────────────────────────────────┤${NC}"
+echo -e "${BIWhite} │${NC}  ${BIWhite}NGINX: ${status_nginx} ${BIWhite}│ XRAY: ${status_xray} ${BIWhite}│ SSH: ${status_ssh} ${BIWhite}│ WS: ${status_ws}${NC}"
+echo -e "${BIWhite} ├─────────────────────────────────────────────────────┤${NC}"
+echo -e "${BIWhite} │${NC}  ${BIWhite}SSH: ${Lime}$sshx${NC}  ${BIWhite}VMESS: ${Lime}$vmsx${NC}  ${BIWhite}VLESS: ${Lime}$vlsx${NC}  ${BIWhite}TROJAN: ${Lime}$trjx${NC}  ${BIWhite}SS: ${Lime}$ssx${NC}"
+echo -e "${BIWhite} ├─────────────────────────────────────────────────────┤${NC}"
+
+CLUSTER_FILE="/etc/satset/cluster.json"
+NODE_KEY_FILE="/etc/satset/node-key.txt"
+CLUSTER_ROLE="standalone"
+if [ -f "$CLUSTER_FILE" ]; then
+    CLUSTER_ROLE=$(python3 -c "import json; print(json.load(open('$CLUSTER_FILE')).get('role', 'standalone'))" 2>/dev/null || echo "standalone")
+fi
+NODE_KEY=""
+if [ -f "$NODE_KEY_FILE" ]; then
+    NODE_KEY=$(cat "$NODE_KEY_FILE" | tr -d '[:space:]' | head -c 16)
+fi
+
+if [ "$CLUSTER_ROLE" = "master" ]; then
+    echo -e "${BIWhite} │${NC}  ${BIWhite}Cluster  : ${Lime}👑 VPS MASTER (SERVER PUSAT)${NC}"
+    python3 -c "
+import json
+try:
+    data = json.load(open('$CLUSTER_FILE'))
+    nodes = data.get('nodes', [])
+    print(f' \033[1;97m│\033[0m  \033[1;97mCabang   : \033[1;92m{len(nodes)} Server Terhubung\033[0m')
+    for n in nodes[:3]:
+        st = n.get('status', 'online')
+        badge = '\033[1;92m[🟢 ONLINE]\033[0m' if st == 'online' else '\033[0;31m[🔴 OFFLINE]\033[0m'
+        dom = n.get('domain', n.get('host', '-'))
+        flag = n.get('flag', '🌐')
+        print(f' \033[1;97m│\033[0m  • {flag} {dom[:24]} {badge}')
+    if len(nodes) > 3:
+        print(f' \033[1;97m│\033[0m  ... dan {len(nodes)-3} server cabang lainnya')
+except Exception:
+    pass
+" 2>/dev/null
+elif [ "$CLUSTER_ROLE" = "node" ]; then
+    echo -e "${BIWhite} │${NC}  ${BIWhite}Cluster  : ${CYAN}🌐 VPS CABANG (WORKER NODE)${NC}"
+    python3 -c "
+import json
+try:
+    m = json.load(open('$CLUSTER_FILE')).get('master', {})
+    m_dom = m.get('domain', m.get('host', '-'))
+    print(f' \033[1;97m│\033[0m  \033[1;97mInduk    : \033[1;92m👑 {m_dom}\033[0m \033[1;92m[🟢 TERHUBUNG]\033[0m')
+except Exception:
+    pass
+" 2>/dev/null
+    if [ -n "$NODE_KEY" ]; then
+        echo -e "${BIWhite} │${NC}  ${BIWhite}API Key  : ${BIYellow}${NODE_KEY}...${NC} ${BIWhite}(satset-node Port 9090)${NC}"
+    fi
+else
+    echo -e "${BIWhite} │${NC}  ${BIWhite}Cluster  : ${BIYellow}⚪ STANDALONE (Bisa Jadi Master/Cabang)${NC}"
+    if [ -n "$NODE_KEY" ]; then
+        echo -e "${BIWhite} │${NC}  ${BIWhite}API Key  : ${BIYellow}${NODE_KEY}...${NC} ${BIWhite}(satset-node Port 9090)${NC}"
+        echo -e "${BIWhite} │${NC}  ${BIWhite}Token    : ${Lime}Ketik '17' / 'm-node' untuk kelola cluster${NC}"
+    else
+        echo -e "${BIWhite} │${NC}  ${BIWhite}Token    : ${Lime}satset-node siap dihubungkan ke Master${NC}"
+    fi
+fi
+
+echo -e "${BIWhite} └─────────────────────────────────────────────────────┘${NC}"
+echo -e "${y} Menu Options :${NC}"
+echo -e "${ungu} [${BIWhite}00${ungu}] ${NC}${BIWhite}SSH & WS Tunnel   ${NC}${ungu}[${BIWhite}09${ungu}] ${NC}${BIWhite}Bot Notifications ${NC}"
+echo -e "${ungu} [${BIWhite}01${ungu}] ${NC}${BIWhite}Vmess             ${NC}${ungu}[${BIWhite}10${ungu}] ${NC}${BIWhite}Backup & Restore  ${NC}"
+echo -e "${ungu} [${BIWhite}02${ungu}] ${NC}${BIWhite}Vless             ${NC}${ungu}[${BIWhite}11${ungu}] ${NC}${BIWhite}Bandwidth Monitor ${NC}"
+echo -e "${ungu} [${BIWhite}03${ungu}] ${NC}${BIWhite}Trojan            ${NC}${ungu}[${BIWhite}12${ungu}] ${NC}${BIWhite}Running Services  ${NC}"
+echo -e "${ungu} [${BIWhite}04${ungu}] ${NC}${BIWhite}Shadowsocks       ${NC}${ungu}[${BIWhite}13${ungu}] ${NC}${BIWhite}Reboot System     ${NC}"
+echo -e "${ungu} [${BIWhite}05${ungu}] ${NC}${BIWhite}Trial Account     ${NC}${ungu}[${BIWhite}14${ungu}] ${NC}${BIWhite}Cloudflare Warp   ${NC}"
+echo -e "${ungu} [${BIWhite}06${ungu}] ${NC}${BIWhite}Domain Settings   ${NC}${ungu}[${BIWhite}15${ungu}] ${NC}${BIWhite}Others Settings   ${NC}"
+echo -e "${ungu} [${BIWhite}07${ungu}] ${NC}${BIWhite}Fix Nginx Off     ${NC}${ungu}[${BIWhite}16${ungu}] ${NC}${BIWhite}Update Script     ${NC}"
+echo -e "${ungu} [${BIWhite}08${ungu}] ${NC}${BIWhite}Bot Telegram Store${NC}${ungu}[${BIWhite}17${ungu}] ${NC}${Lime}Multi-VPS Cluster ${NC}"
+echo -e "${BIWhite} ┌─────────────────────────────────────────────────────┐${NC}"
+echo -e "${BIWhite} │${NC} ${BIWhite}Today   : ${Lime}$ttoday${NC}  ${BIWhite}│ Yesterday : ${Lime}$tyest${NC}"
+echo -e "${BIWhite} │${NC} ${BIWhite}Month   : ${Lime}$tmon${NC}"
+echo -e "${BIWhite} ├─────────────────────────────────────────────────────┤${NC}"
+echo -e "${BIWhite} │${NC} ${BIYellow}Version : ${BIWhite}25.5.16${NC}"
+echo -e "${BIWhite} │${NC} ${BIYellow}Pembuat : ${BIWhite}MAS ANSOR PROJECT${NC}"
+echo -e "${BIWhite} └─────────────────────────────────────────────────────┘${NC}"
+echo -ne "\033[1;36m Select menu [00-17] or [x]: \033[0m"
+read -r opt
+echo -e ""
+case $opt in
+00|ssh|SSH) clear ; m-ssh ;;
+1|01) clear ; m-vmess ;;
+2|02) clear ; m-vless ;;
+3|03) clear ; m-trojan ;;
+4|04) clear ; m-shadowsocks ;;
+5|05) clear ; m-trial ;;
+6|06) clear ; m-domain ;;
+7|07) clear ; fix-nginx ;;
+8|08) clear ; m-bot ;;
+9|09) clear ; m-bot-notif ;;
+10) clear ; m-backup ;;
+11) clear ; bw ;;
+12) clear ; run ;;
+13) clear ; reboot ;;
+14) clear ; m-warp ;;
+15) clear ; m-setting ;;
+16) clear ; update ;;
+17|cluster|node) clear ; m-node ;;
+0) clear ; menu ;;
+x|X) exit 0 ;;
+*) echo -e "\033[0;31m Pilihan tidak valid!\033[0m" ; sleep 1 ; menu ;;
+esac
