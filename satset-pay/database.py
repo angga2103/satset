@@ -139,7 +139,7 @@ def init_db():
         "admin_password": "admin123",
         "static_qris": USER_DEFAULT_QRIS,
         "brand_name": USER_BRAND_NAME,
-        "webhook_secret": secrets.token_hex(20),
+        "webhook_secret": "",
         "unique_code_min": str(UNIQUE_CODE_MIN),
         "unique_code_max": str(UNIQUE_CODE_MAX),
         "invoice_timeout_minutes": str(INVOICE_TIMEOUT_MINUTES)

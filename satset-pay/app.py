@@ -263,14 +263,17 @@ def api_get_order(order_id):
 @app.route("/api/v1/webhook/listener", methods=["POST"])
 def webhook_listener():
     # Verify Webhook Secret
-    expected_secret = database.get_setting("webhook_secret", "")
-    req_secret = request.headers.get("X-Webhook-Secret") or request.args.get("secret")
+    expected_secret = database.get_setting("webhook_secret", "").strip()
+    req_secret = (request.headers.get("X-Webhook-Secret") or request.args.get("secret") or "").strip()
 
     data = request.get_json(silent=True) or {}
+    logger.info(f"Webhook incoming from {request.remote_addr}: {data}")
+
     if not req_secret and isinstance(data, dict):
-        req_secret = data.get("secret")
+        req_secret = str(data.get("secret", "")).strip()
 
     if expected_secret and req_secret != expected_secret:
+        logger.warning(f"Webhook rejected: secret mismatch from {request.remote_addr}")
         return jsonify({"status": "error", "message": "Invalid webhook secret"}), 401
 
     title = data.get("title", "")
