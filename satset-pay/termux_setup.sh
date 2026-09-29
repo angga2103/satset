@@ -23,19 +23,24 @@ echo -e "${CYAN}└────────────────────�
 echo ""
 
 # 1. Update paket & install dependensi Termux
-echo -e "${YELLOW}[1/4] Memasang paket yang dibutuhkan (python, termux-api, curl)...${NC}"
-pkg update -y -q || true
-pkg install -y termux-api python curl -q || true
+echo -e "${YELLOW}[1/4] Memasang paket yang dibutuhkan (python, termux-api)...${NC}"
+pkg install -y python termux-api libngtcp2 openssl ca-certificates -q || true
 
 # 2. Buat folder dan unduh termux_listener.py
 echo -e "${YELLOW}[2/4] Mengunduh skrip listener terbaru dari GitHub...${NC}"
 mkdir -p "$HOME/satset-pay"
 REPO_RAW="https://raw.githubusercontent.com/angga2103/satset/main/satset-pay/termux_listener.py"
-curl -fsSL "$REPO_RAW?v=$(date +%s)" -o "$HOME/satset-pay/termux_listener.py"
+
+# Download dengan python urllib (kebal error curl/libcurl dynamic linker)
+if ! python3 -c "import urllib.request; urllib.request.urlretrieve('$REPO_RAW?v=$(date +%s)', '$HOME/satset-pay/termux_listener.py')" 2>/dev/null; then
+    curl -fsSL "$REPO_RAW?v=$(date +%s)" -o "$HOME/satset-pay/termux_listener.py" 2>/dev/null || \
+    wget -q -O "$HOME/satset-pay/termux_listener.py" "$REPO_RAW?v=$(date +%s)" 2>/dev/null || true
+fi
 chmod +x "$HOME/satset-pay/termux_listener.py"
 
 # 3. Buat shortcut cepat di Termux: cukup ketik 'satset'
 echo -e "${YELLOW}[3/4] Membuat perintah pintasan 'satset' di Termux...${NC}"
+mkdir -p "$PREFIX/bin"
 cat << 'EOF' > "$PREFIX/bin/satset"
 #!/data/data/com.termux/files/usr/bin/bash
 python3 "$HOME/satset-pay/termux_listener.py" "$@"
