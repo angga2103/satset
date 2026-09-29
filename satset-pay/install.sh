@@ -47,7 +47,7 @@ if [ -f "${SCRIPT_DIR}/app.py" ]; then
 else
     REPO_RAW="https://raw.githubusercontent.com/angga2103/satset/main/satset-pay"
     CACHE_BUSTER="?v=$(date +%s)"
-    for f in app.py config.py database.py qris_engine.py requirements.txt macrodroid_guide.md README.md install.sh; do
+    for f in app.py config.py database.py qris_engine.py requirements.txt macrodroid_guide.md README.md install.sh termux_listener.py termux_setup.sh termux_guide.md; do
         curl -fsSL -o "$INSTALL_DIR/$f" "$REPO_RAW/$f${CACHE_BUSTER}" 2>/dev/null || wget -q -O "$INSTALL_DIR/$f" "$REPO_RAW/$f${CACHE_BUSTER}" 2>/dev/null || true
     done
     for f in __init__.py gobiz.py shopee.py dana.py; do

@@ -700,7 +700,7 @@ function memasang_menu(){
 
     # Pasang SATSET-PAY (Micro QRIS Gateway)
     mkdir -p /etc/satset/satset-pay/{parsers,templates}
-    for f in app.py config.py database.py qris_engine.py requirements.txt install.sh macrodroid_guide.md README.md; do
+    for f in app.py config.py database.py qris_engine.py requirements.txt install.sh macrodroid_guide.md README.md termux_listener.py termux_setup.sh termux_guide.md; do
         wget -q -O "/etc/satset/satset-pay/$f" "${REPO}satset-pay/$f" || true
     done
     for f in __init__.py gobiz.py shopee.py dana.py; do

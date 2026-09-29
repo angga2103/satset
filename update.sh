@@ -336,7 +336,7 @@ fi
 # Sinkronkan SATSET-PAY (Micro QRIS Payment Gateway)
 info "Sinkronisasi SATSET-PAY (Micro QRIS Gateway)"
 mkdir -p /etc/satset/satset-pay/{parsers,templates}
-PAY_FILES=(app.py config.py database.py qris_engine.py requirements.txt install.sh macrodroid_guide.md README.md)
+PAY_FILES=(app.py config.py database.py qris_engine.py requirements.txt install.sh macrodroid_guide.md README.md termux_listener.py termux_setup.sh termux_guide.md)
 for f in "${PAY_FILES[@]}"; do
     wget -q -O "/etc/satset/satset-pay/$f" "$REPO_RAW/satset-pay/$f${CACHE_BUSTER}" 2>/dev/null || \
     curl -fsSL -o "/etc/satset/satset-pay/$f" "$REPO_RAW/satset-pay/$f${CACHE_BUSTER}" 2>/dev/null || true
