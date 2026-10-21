@@ -255,19 +255,40 @@ ln -sf /usr/local/sbin/tune-warp /usr/local/sbin/warp 2>/dev/null || true
 # Pastikan outbound warp ada di /etc/xray/config.json tanpa menghapus akun
 if [ -f /etc/xray/config.json ]; then
     python3 -c "
-import json
+import json, re
 try:
-    with open('/etc/xray/config.json', 'r') as f:
-        data = json.load(f)
-    outbounds = data.setdefault('outbounds', [])
+    with open('/etc/xray/config.json', 'r', encoding='utf-8', errors='ignore') as f:
+        content = f.read()
+    clean = re.sub(r'^\s*#.*$', '', content, flags=re.MULTILINE)
+    clean = re.sub(r'//.*$', '', clean, flags=re.MULTILINE)
+    data = json.loads(clean)
+    outbounds = data.get('outbounds', [])
     if not any(ob.get('tag') == 'warp' for ob in outbounds):
         outbounds.append({
             'protocol': 'socks',
             'tag': 'warp',
             'settings': {'servers': [{'address': '127.0.0.1', 'port': 40000}]}
         })
-        with open('/etc/xray/config.json', 'w') as f:
-            json.dump(data, f, indent=2)
+        idx = content.find('\"outbounds\"')
+        if idx != -1:
+            prefix = content[:idx]
+            outbounds_json = json.dumps(outbounds, indent=2)
+            routing = data.get('routing', {})
+            routing_json = json.dumps(routing, indent=2)
+            dns = data.get('dns', {})
+            dns_json = json.dumps(dns, indent=2) if dns else None
+            outbounds_indented = '  \"outbounds\": ' + '\n'.join('  ' + line if i > 0 else line for i, line in enumerate(outbounds_json.splitlines()))
+            routing_indented = '  \"routing\": ' + '\n'.join('  ' + line if i > 0 else line for i, line in enumerate(routing_json.splitlines()))
+            tail = outbounds_indented + ',\n' + routing_indented
+            if dns_json:
+                dns_indented = '  \"dns\": ' + '\n'.join('  ' + line if i > 0 else line for i, line in enumerate(dns_json.splitlines()))
+                tail += ',\n' + dns_indented
+            tail += '\n}\n'
+            new_content = prefix + tail
+            test_clean = re.sub(r'^\s*#.*$', '', new_content, flags=re.MULTILINE)
+            json.loads(test_clean)
+            with open('/etc/xray/config.json', 'w', encoding='utf-8') as f:
+                f.write(new_content)
 except Exception:
     pass
 " 2>/dev/null || true

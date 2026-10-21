@@ -67,10 +67,13 @@ get_current_mode() {
         return
     fi
     python3 -c "
-import json
+import json, re
 try:
-    with open('$CONFIG_FILE') as f:
-        data = json.load(f)
+    with open('$CONFIG_FILE', 'r', encoding='utf-8', errors='ignore') as f:
+        raw = f.read()
+    clean = re.sub(r'^\s*#.*$', '', raw, flags=re.MULTILINE)
+    clean = re.sub(r'//.*$', '', clean, flags=re.MULTILINE)
+    data = json.loads(clean)
     rules = data.get('routing', {}).get('rules', [])
     warp_rule = next((r for r in rules if r.get('outboundTag') == 'warp'), None)
     if not warp_rule:
@@ -134,7 +137,16 @@ install_warp_client() {
         install_warp_go_fallback
     fi
 
-    # Verifikasi apakah port 40000 aktif
+    # Verifikasi apakah port 40000 aktif (tunggu hingga 6 detik jika daemon sedang handshake)
+    local waited=0
+    while [ $waited -lt 6 ]; do
+        if check_port_listening; then
+            break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+
     if check_port_listening; then
         local warp_ip=$(get_warp_ip)
         msg_ok "Cloudflare WARP aktif di 127.0.0.1:${WARP_PORT}!"
@@ -142,7 +154,7 @@ install_warp_client() {
     else
         msg_warn "WARP belum mendengarkan di port ${WARP_PORT}. Mencoba restart daemon..."
         systemctl restart warp-svc 2>/dev/null || systemctl restart warp-go 2>/dev/null || true
-        sleep 2
+        sleep 3
     fi
 }
 
@@ -242,22 +254,33 @@ patch_xray_config() {
     # Backup konfigurasi sebelum modifikasi
     cp -f "$CONFIG_FILE" "${CONFIG_FILE}.warp.bak"
 
-    python3 - << PYEOF
+    if ! python3 - << PYEOF
 import json
+import re
 import sys
+import os
 
 cfg_file = "$CONFIG_FILE"
 mode = "$target_mode"
 warp_port = int("$WARP_PORT")
 
 try:
-    with open(cfg_file, 'r', encoding='utf-8') as f:
-        data = json.load(f)
+    with open(cfg_file, 'r', encoding='utf-8', errors='ignore') as f:
+        content = f.read()
+except Exception as e:
+    print(f"ERROR: Gagal membaca file konfigurasi: {e}")
+    sys.exit(1)
+
+# Bersihkan komentar hanya untuk parsing Python (JSON standar tidak mendukung komentar #)
+clean = re.sub(r'^\s*#.*$', '', content, flags=re.MULTILINE)
+clean = re.sub(r'//.*$', '', clean, flags=re.MULTILINE)
+try:
+    data = json.loads(clean)
 except Exception as e:
     print(f"ERROR: Gagal membaca JSON: {e}")
     sys.exit(1)
 
-outbounds = data.setdefault("outbounds", [])
+outbounds = data.get("outbounds", [])
 warp_ob = next((ob for ob in outbounds if ob.get("tag") == "warp"), None)
 if not warp_ob:
     warp_ob = {
@@ -274,15 +297,15 @@ if not warp_ob:
     }
     outbounds.append(warp_ob)
 else:
-    # Ensure port is correct
+    # Pastikan port sesuai
     warp_ob["settings"] = {
         "servers": [{"address": "127.0.0.1", "port": warp_port}]
     }
 
-routing = data.setdefault("routing", {})
-rules = routing.setdefault("rules", [])
+routing = data.get("routing", {})
+rules = routing.get("rules", [])
 
-# Remove existing warp rules
+# Bersihkan aturan WARP lama
 rules[:] = [r for r in rules if r.get("outboundTag") != "warp"]
 
 # Streaming & AI unlock domain list
@@ -318,7 +341,6 @@ STREAMING_DOMAINS = [
     "domain:ipinfo.io"
 ]
 
-import os
 custom_domains_file = "/etc/satset/warp-domains.txt"
 if os.path.exists(custom_domains_file):
     try:
@@ -334,13 +356,12 @@ if os.path.exists(custom_domains_file):
         pass
 
 if mode == "smart":
-    # Insert smart media/AI rule right before the catch-all direct rule
+    # Sisipkan aturan smart media/AI tepat sebelum aturan direct
     smart_rule = {
         "type": "field",
         "outboundTag": "warp",
         "domain": STREAMING_DOMAINS
     }
-    # Find position: insert before catch-all rule
     insert_idx = len(rules)
     for i, r in enumerate(rules):
         if r.get("outboundTag") == "direct" and r.get("network") == "tcp,udp":
@@ -349,7 +370,7 @@ if mode == "smart":
     rules.insert(insert_idx, smart_rule)
 
 elif mode == "full":
-    # Route all normal client traffic through warp
+    # Rute seluruh trafik normal melalui WARP
     full_rule = {
         "type": "field",
         "outboundTag": "warp",
@@ -363,14 +384,54 @@ elif mode == "full":
     rules.insert(insert_idx, full_rule)
 
 elif mode == "off":
-    # All client traffic stays direct (rules already stripped of warp)
+    # Trafik tetap direct (aturan warp sudah dihapus)
     pass
 
+routing["rules"] = rules
+
+# Pertahankan komentar inbounds (#vless, #vmess, dll) dengan memisahkan sebelum "outbounds"
+outbounds_idx = content.find('"outbounds"')
+if outbounds_idx != -1:
+    prefix = content[:outbounds_idx]
+    outbounds_json = json.dumps(outbounds, indent=2)
+    routing_json = json.dumps(routing, indent=2)
+    dns = data.get("dns", {})
+    dns_json = json.dumps(dns, indent=2) if dns else None
+
+    outbounds_indented = '  "outbounds": ' + '\n'.join('  ' + line if i > 0 else line for i, line in enumerate(outbounds_json.splitlines()))
+    routing_indented = '  "routing": ' + '\n'.join('  ' + line if i > 0 else line for i, line in enumerate(routing_json.splitlines()))
+
+    tail = outbounds_indented + ',\n' + routing_indented
+    if dns_json:
+        dns_indented = '  "dns": ' + '\n'.join('  ' + line if i > 0 else line for i, line in enumerate(dns_json.splitlines()))
+        tail += ',\n' + dns_indented
+    tail += '\n}\n'
+    new_content = prefix + tail
+else:
+    data["outbounds"] = outbounds
+    data["routing"] = routing
+    new_content = json.dumps(data, indent=2)
+
+# Validasi hasil sintaks sebelum disimpan
+test_clean = re.sub(r'^\s*#.*$', '', new_content, flags=re.MULTILINE)
+test_clean = re.sub(r'//.*$', '', test_clean, flags=re.MULTILINE)
+try:
+    json.loads(test_clean)
+except Exception as e:
+    print(f"ERROR: Hasil konfigurasi tidak valid: {e}")
+    sys.exit(1)
+
 with open(cfg_file, 'w', encoding='utf-8') as f:
-    json.dump(data, f, indent=2)
+    f.write(new_content)
 
 print("SUCCESS")
 PYEOF
+    then
+        msg_err "Gagal memodifikasi konfigurasi Xray. Mengembalikan backup..."
+        cp -f "${CONFIG_FILE}.warp.bak" "$CONFIG_FILE" 2>/dev/null || true
+        rm -f "${CONFIG_FILE}.warp.bak"
+        return 1
+    fi
 
     # Verifikasi konfigurasi dengan binary xray
     local test_cmd=("$XRAY_BIN" "run" "-test" "-config" "$CONFIG_FILE")
@@ -385,6 +446,7 @@ PYEOF
     else
         msg_err "Uji konfigurasi Xray gagal! Mengembalikan backup konfigurasi..."
         cp -f "${CONFIG_FILE}.warp.bak" "$CONFIG_FILE"
+        rm -f "${CONFIG_FILE}.warp.bak"
         systemctl restart xray 2>/dev/null || true
         return 1
     fi

@@ -45,10 +45,13 @@ get_warp_status() {
 
     if [ -f /etc/xray/config.json ]; then
         xray_mode=$(python3 -c "
-import json
+import json, re
 try:
-    with open('/etc/xray/config.json') as f:
-        data = json.load(f)
+    with open('/etc/xray/config.json', 'r', encoding='utf-8', errors='ignore') as f:
+        raw = f.read()
+    clean = re.sub(r'^\s*#.*$', '', raw, flags=re.MULTILINE)
+    clean = re.sub(r'//.*$', '', clean, flags=re.MULTILINE)
+    data = json.loads(clean)
     rules = data.get('routing', {}).get('rules', [])
     warp_rule = next((r for r in rules if r.get('outboundTag') == 'warp'), None)
     if not warp_rule:
