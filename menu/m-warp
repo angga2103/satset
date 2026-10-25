@@ -95,11 +95,12 @@ m_warp() {
     echo -e " ${green}[${BIWhite}06${green}]${NC} ${BIWhite}Restart Service Cloudflare WARP${NC}"
     echo -e " ${green}[${BIWhite}07${green}]${NC} ${RED}Hapus / Uninstall Cloudflare WARP${NC}"
     echo -e " ${green}[${BIWhite}08${green}]${NC} ${BIWhite}Kelola Domain Kustom Smart WARP (/etc/satset/warp-domains.txt)${NC}"
+    echo -e " ${green}[${BIWhite}09${green}]${NC} ${Lime}Ganti / Refresh IP WARP (Rotasi IP Baru jika Terblokir)${NC} 🔄"
     echo -e " ${BIWhite}────────────────────────────────────────────────────────${NC}"
     echo -e " ${green}[${BIWhite}00${green}]${NC} ${BIWhite}Kembali ke Menu Utama (menu)${NC}"
     echo -e " ${BIWhite}────────────────────────────────────────────────────────${NC}"
     echo ""
-    read -p " Pilih opsi [00-08]: " opt
+    read -p " Pilih opsi [00-09]: " opt
     echo ""
 
     case "$opt" in
@@ -215,6 +216,14 @@ m_warp() {
                 *)
                     ;;
             esac
+            echo ""
+            echo -ne "${BICyan}Tekan tombol apa saja untuk kembali ke menu...${NC}"
+            read -n 1 -s -r
+            m_warp
+            ;;
+        9|09)
+            clear
+            bash "$TUNE_WARP" refresh
             echo ""
             echo -ne "${BICyan}Tekan tombol apa saja untuk kembali ke menu...${NC}"
             read -n 1 -s -r

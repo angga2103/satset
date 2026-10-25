@@ -1162,12 +1162,30 @@ def sync_all_accounts() -> dict:
                     parts = line.strip().split()
                     if len(parts) >= 3 and parts[0] in ["###", "#ssh#"]:
                         uname = parts[1]
-                        if uname in SYSTEM_USERS or uname.startswith("systemd-") or uname in known_db_users:
+                        if uname in SYSTEM_USERS or uname.startswith("systemd-"):
                             continue
                         exp_date = parts[2]
                         pwd = parts[3] if len(parts) >= 4 else "sat12345"
                         ip_l = int(parts[4]) if len(parts) >= 5 and parts[4].isdigit() else 1
                         q_gb = int(parts[5]) if len(parts) >= 6 and parts[5].isdigit() else 0
+
+                        # Prioritaskan file limit IP riil di /etc/limit/ssh/ip/{uname}
+                        ip_file = f"/etc/limit/ssh/ip/{uname}"
+                        if os.path.exists(ip_file):
+                            try:
+                                with open(ip_file, "r") as ff:
+                                    v = ff.read().strip()
+                                    if v.isdigit():
+                                        ip_l = int(v)
+                            except Exception:
+                                pass
+
+                        if uname in known_db_users:
+                            acc_ex = database.get_account_by_username(uname)
+                            if acc_ex and acc_ex.get("ip_limit") != ip_l:
+                                database.update_account_rules(uname, ip_limit=ip_l)
+                            continue
+
                         domain = get_domain()
                         ssh_link = f"ssh://{uname}:{pwd}@{domain}:443"
                         database.add_vpn_account(0, "ssh", uname, pwd, "vps-cli", exp_date, ssh_link, quota_gb=q_gb, ip_limit=ip_l, price_paid=0)
@@ -1183,10 +1201,27 @@ def sync_all_accounts() -> dict:
                         if len(parts) >= 3 and parts[2].isdigit():
                             uname = parts[0]
                             uid = int(parts[2])
-                            if uid >= 1000 and uname not in SYSTEM_USERS and not uname.startswith("systemd-") and uname not in known_db_users:
+                            if uid >= 1000 and uname not in SYSTEM_USERS and not uname.startswith("systemd-"):
+                                ip_l = 1
+                                ip_file = f"/etc/limit/ssh/ip/{uname}"
+                                if os.path.exists(ip_file):
+                                    try:
+                                        with open(ip_file, "r") as ff:
+                                            v = ff.read().strip()
+                                            if v.isdigit():
+                                                ip_l = int(v)
+                                    except Exception:
+                                        pass
+
+                                if uname in known_db_users:
+                                    acc_ex = database.get_account_by_username(uname)
+                                    if acc_ex and acc_ex.get("ip_limit") != ip_l:
+                                        database.update_account_rules(uname, ip_limit=ip_l)
+                                    continue
+
                                 exp_date = (datetime.datetime.now() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
                                 domain = get_domain()
-                                database.add_vpn_account(0, "ssh", uname, "sat12345", "vps-cli", exp_date, f"ssh://{uname}:sat12345@{domain}:443", quota_gb=0, ip_limit=1, price_paid=0)
+                                database.add_vpn_account(0, "ssh", uname, "sat12345", "vps-cli", exp_date, f"ssh://{uname}:sat12345@{domain}:443", quota_gb=0, ip_limit=ip_l, price_paid=0)
                                 synced_to_db.append(uname)
                                 known_db_users.add(uname)
             except Exception:
@@ -1201,11 +1236,55 @@ def sync_all_accounts() -> dict:
                 for tag, proto in tags:
                     matches = re.findall(rf'{re.escape(tag)}\s+([a-zA-Z0-9_]+)\s+([0-9-]+)', content)
                     for uname, exp_date in matches:
-                        if uname in SYSTEM_USERS or uname.startswith("systemd-") or uname in known_db_users:
+                        if uname in SYSTEM_USERS or uname.startswith("systemd-"):
                             continue
+
+                        # Baca limit IP riil dari file sistem /etc/limit/{proto}/ip/{uname}
+                        real_ip_limit = 1
+                        ip_file = f"/etc/limit/{proto}/ip/{uname}"
+                        if os.path.exists(ip_file):
+                            try:
+                                with open(ip_file, "r") as ff:
+                                    val = ff.read().strip()
+                                    if val.isdigit():
+                                        real_ip_limit = int(val)
+                            except Exception:
+                                pass
+                        else:
+                            proto_db = f"/etc/{proto}/.{proto}.db"
+                            if os.path.exists(proto_db):
+                                try:
+                                    with open(proto_db, "r", encoding="utf-8", errors="ignore") as ff:
+                                        for pline in ff:
+                                            parts = pline.strip().split()
+                                            if len(parts) >= 6 and parts[1] == uname and parts[5].isdigit():
+                                                real_ip_limit = int(parts[5])
+                                                break
+                                except Exception:
+                                    pass
+
+                        # Cek kuota riil
+                        real_quota_gb = 0
+                        quota_file = f"/etc/{proto}/{uname}"
+                        if os.path.exists(quota_file):
+                            try:
+                                with open(quota_file, "r") as ff:
+                                    val = ff.read().strip()
+                                    if val.isdigit():
+                                        real_quota_gb = int(int(val) / (1024 ** 3))
+                            except Exception:
+                                pass
+
+                        # Jika akun sudah ada di database, sinkronkan limit IP jika berbeda
+                        if uname in known_db_users:
+                            acc_existing = database.get_account_by_username(uname)
+                            if acc_existing and acc_existing.get("ip_limit") != real_ip_limit:
+                                database.update_account_rules(uname, ip_limit=real_ip_limit)
+                            continue
+
                         uuid_m = re.search(rf'"(?:id|password)":\s*"([^"]+)".*?"email":\s*"{re.escape(uname)}"', content)
                         user_uuid = uuid_m.group(1) if uuid_m else str(uuid_pkg.uuid4())
-                        database.add_vpn_account(0, proto, uname, user_uuid, "vps-cli", exp_date, f"{proto}://{user_uuid}", quota_gb=350, ip_limit=1, price_paid=0)
+                        database.add_vpn_account(0, proto, uname, user_uuid, "vps-cli", exp_date, f"{proto}://{user_uuid}", quota_gb=real_quota_gb, ip_limit=real_ip_limit, price_paid=0)
                         synced_to_db.append(uname)
                         known_db_users.add(uname)
 

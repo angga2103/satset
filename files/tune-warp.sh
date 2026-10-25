@@ -242,6 +242,50 @@ restart_warp() {
     fi
 }
 
+refresh_warp_ip() {
+    check_root
+    msg_info "Memperbarui / Refresh IP Cloudflare WARP..."
+    local svc=$(detect_warp_service)
+    if [ "$svc" == "warp-svc" ] || [ "$svc" == "warp-cli" ]; then
+        msg_info "Meminta alokasi IP baru dari Cloudflare Network..."
+        warp-cli --accept-tos disconnect >/dev/null 2>&1 || true
+        warp-cli --accept-tos registration delete >/dev/null 2>&1 || true
+        sleep 1
+        warp-cli --accept-tos registration new >/dev/null 2>&1 || warp-cli --accept-tos register >/dev/null 2>&1 || true
+        warp-cli --accept-tos mode proxy >/dev/null 2>&1 || warp-cli --accept-tos set-mode proxy >/dev/null 2>&1 || true
+        warp-cli --accept-tos proxy port "$WARP_PORT" >/dev/null 2>&1 || warp-cli --accept-tos set-proxy-port "$WARP_PORT" >/dev/null 2>&1 || true
+        warp-cli --accept-tos connect >/dev/null 2>&1 || true
+    elif [ "$svc" == "warp-go" ]; then
+        msg_info "Mendaftarkan ulang warp-go daemon untuk mendapatkan IP baru..."
+        systemctl stop warp-go 2>/dev/null || true
+        cd /opt/warp-go 2>/dev/null && ./warp-go --register --socks5="127.0.0.1:${WARP_PORT}" >/dev/null 2>&1 || true
+        systemctl start warp-go 2>/dev/null || true
+    else
+        msg_err "Layanan Cloudflare WARP belum terpasang."
+        return 1
+    fi
+
+    local waited=0
+    while [ $waited -lt 6 ]; do
+        if check_port_listening; then
+            break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    if check_port_listening; then
+        local new_ip=$(get_warp_ip)
+        msg_ok "Berhasil mendapatkan IP Cloudflare WARP baru: ${WHITE}${new_ip}${NC}"
+        # Restart xray agar koneksi routing segera beralih
+        systemctl restart xray 2>/dev/null || true
+        return 0
+    else
+        msg_err "Gagal menghubungkan kembali ke WARP."
+        return 1
+    fi
+}
+
 patch_xray_config() {
     local target_mode="$1"
     check_root
@@ -326,6 +370,19 @@ STREAMING_DOMAINS = [
     "domain:nflxvideo.net",
     "domain:nflxso.net",
     "domain:nflxext.com",
+    "domain:nflxsearch.net",
+    "domain:netflixstudios.com",
+    "domain:fast.com",
+    "domain:netflixdnstest0.com",
+    "domain:netflixdnstest1.com",
+    "domain:netflixdnstest2.com",
+    "domain:netflixdnstest3.com",
+    "domain:netflixdnstest4.com",
+    "domain:netflixdnstest5.com",
+    "domain:netflixdnstest6.com",
+    "domain:netflixdnstest7.com",
+    "domain:netflixdnstest8.com",
+    "domain:netflixdnstest9.com",
     "domain:disneyplus.com",
     "domain:disney.com",
     "domain:dssott.com",
@@ -362,12 +419,18 @@ if mode == "smart":
         "outboundTag": "warp",
         "domain": STREAMING_DOMAINS
     }
+    # Tambahkan geoip:netflix jika file geoip.dat tersedia di sistem
+    geoip_exists = any(os.path.exists(os.path.join(d, "geoip.dat")) for d in ["/usr/local/share/xray", "/usr/share/xray", "/etc/xray"])
+    if geoip_exists:
+        smart_rule["ip"] = ["geoip:netflix"]
+
     insert_idx = len(rules)
     for i, r in enumerate(rules):
         if r.get("outboundTag") == "direct" and r.get("network") == "tcp,udp":
             insert_idx = i
             break
     rules.insert(insert_idx, smart_rule)
+    routing["domainStrategy"] = "IPIfNonMatch"
 
 elif mode == "full":
     # Rute seluruh trafik normal melalui WARP
@@ -527,11 +590,22 @@ test_unlock() {
 
     # 3. Uji Netflix Unlock
     echo -ne "• Menguji Akses Netflix (Bypass Datacenter Block)... "
-    local nf_code=$(curl -s -o /dev/null -w "%{http_code}" -x "socks5h://127.0.0.1:${WARP_PORT}" --max-time 8 "https://www.netflix.com/title/80018499" 2>/dev/null || echo "000")
+    local nf_code=$(curl -fsL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -o /dev/null -w "%{http_code}" -x "socks5h://127.0.0.1:${WARP_PORT}" --max-time 10 "https://www.netflix.com/title/80018499" 2>/dev/null || echo "000")
     if [ "$nf_code" == "200" ]; then
-        echo -e "${GREEN}[ UNLOCKED / RESIDENTIAL SUPPORT ] (Code: 200)${NC}"
+        echo -e "${GREEN}[ UNLOCKED / RESIDENTIAL SUPPORT (FULL CATALOG) ] (Code: 200)${NC}"
     elif [ "$nf_code" == "403" ] || [ "$nf_code" == "404" ]; then
-        echo -e "${YELLOW}[ ORIGINAL ONLY / REGION RESTRICTED ] (Code: $nf_code)${NC}"
+        local nf_orig=$(curl -fsL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o /dev/null -w "%{http_code}" -x "socks5h://127.0.0.1:${WARP_PORT}" --max-time 8 "https://www.netflix.com/title/80057281" 2>/dev/null || echo "000")
+        if [ "$nf_orig" == "200" ]; then
+            echo -e "${YELLOW}[ PARTIAL / NETFLIX ORIGINALS ONLY ]${NC}"
+            echo -e "    ${YELLOW}ℹ IP WARP ini hanya membuka film Originals Netflix.${NC}"
+            echo -e "    ${YELLOW}ℹ Jalankan opsi Refresh IP WARP untuk mencoba mendapatkan IP baru.${NC}"
+        else
+            echo -e "${RED}[ BLOCKED / PROXY DETECTED ] (Code: $nf_code)${NC}"
+            echo -e "    ${YELLOW}ℹ IP WARP saat ini ditandai proxy oleh Netflix.${NC}"
+            echo -e "    ${YELLOW}ℹ Gunakan menu [09] Refresh IP WARP untuk merotasi IP baru.${NC}"
+        fi
+    elif [ "$nf_code" == "301" ] || [ "$nf_code" == "302" ]; then
+        echo -e "${GREEN}[ UNLOCKED / REDIRECT OK ] (Code: $nf_code)${NC}"
     else
         echo -e "${RED}[ BLOCKED / TIMEOUT ] (Code: $nf_code)${NC}"
     fi
@@ -600,6 +674,9 @@ case "${1:-}" in
         ;;
     restart)
         restart_warp
+        ;;
+    refresh|renew-ip|refresh-ip)
+        refresh_warp_ip
         ;;
     smart)
         set_xray_mode "smart"

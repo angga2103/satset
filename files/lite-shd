@@ -164,9 +164,13 @@ function memulai_pengecekan() {
         done
 
         if [[ -s /tmp/ipshadowsocks.txt ]]; then
-            raw_limit_ip=$(cat /etc/limit/shadowsocks/ip/"$user" 2>/dev/null || echo 2)
+            raw_limit_ip=$(cat /etc/limit/shadowsocks/ip/"$user" 2>/dev/null || echo 0)
             limit_ip=$(echo "$raw_limit_ip" | grep -o '[0-9]\+' | head -n1)
-            [[ -z "$limit_ip" || "$limit_ip" -le 0 ]] && limit_ip=2
+            [ -z "$limit_ip" ] && limit_ip=0
+
+            if [ "$limit_ip" -eq 0 ]; then
+                continue # 0 = Unlimited IP
+            fi
 
             login_count=$(wc -l < /tmp/ipshadowsocks.txt)
 

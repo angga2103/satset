@@ -174,7 +174,31 @@ def process_limiter_and_violations(bot=None):
 
             proto = acc.get("protocol", "vmess")
             user_id = acc.get("user_id")
-            ip_limit = acc.get("ip_limit") or cfg.get("DEFAULT_IP_LIMIT", 2)
+
+            # Ambil batas IP riil: prioritaskan file sistem /etc/limit/{proto}/ip/{uname} jika di node lokal
+            ip_limit = None
+            if nid == 0:
+                ip_file = f"/etc/limit/{proto}/ip/{uname}"
+                if os.path.exists(ip_file):
+                    try:
+                        with open(ip_file, "r") as f:
+                            content = f.read().strip()
+                            if content.isdigit():
+                                ip_limit = int(content)
+                                if acc.get("ip_limit") != ip_limit:
+                                    database.update_account_rules(uname, ip_limit=ip_limit)
+                    except Exception:
+                        pass
+
+            if ip_limit is None:
+                if "ip_limit" in acc and acc["ip_limit"] is not None:
+                    ip_limit = int(acc["ip_limit"])
+                else:
+                    ip_limit = cfg.get("DEFAULT_IP_LIMIT", 2)
+
+            # Batas IP <= 0 artinya UNLIMITED (Bebas / Tanpa batas login IP)
+            if ip_limit <= 0:
+                continue
 
             if len(ips) > ip_limit:
                 if auto_suspend:
