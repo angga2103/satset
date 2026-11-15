@@ -146,27 +146,38 @@ if [ ! -s /etc/xray/xray.crt ] || [ ! -s /etc/xray/xray.key ]; then
     -keyout /etc/xray/xray.key -out /etc/xray/xray.crt \
     -subj "/C=ID/ST=Jakarta/L=Jakarta/O=VPN/OU=Server/CN=$DOMAIN" >/dev/null 2>&1
 fi
-chmod 600 /etc/xray/xray.key
+chmod 644 /etc/xray/xray.key
+chown -R www-data:www-data /etc/xray /var/log/xray /run/xray 2>/dev/null || true
 ok "SSL OK"
 
 ############################################
 # XRAY CORE
 ############################################
 info "Install Xray $XRAY_VERSION"
-mkdir -p /run/xray
-chown www-data:www-data /run/xray
+mkdir -p /run/xray /var/log/xray /etc/xray
+touch /var/log/xray/access.log /var/log/xray/error.log 2>/dev/null || true
+chmod 644 /var/log/xray/access.log /var/log/xray/error.log 2>/dev/null || true
+chown -R www-data:www-data /run/xray /var/log/xray /etc/xray 2>/dev/null || true
 bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" \
   @ install -u www-data --version "$XRAY_VERSION"
+[ -d /usr/bin/xray ] && rm -rf /usr/bin/xray
+ln -sf /usr/local/bin/xray /usr/bin/xray
 wget -q -O /etc/xray/config.json "$REPO_RAW/config/config.json"
-mkdir -p /usr/local/share/xray
+mkdir -p /usr/local/share/xray /usr/share/xray
 wget -q -O /usr/local/share/xray/geosite.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat" 2>/dev/null || true
 wget -q -O /usr/local/share/xray/geoip.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat" 2>/dev/null || true
+cp -f /usr/local/share/xray/geosite.dat /usr/share/xray/geosite.dat 2>/dev/null || true
+cp -f /usr/local/share/xray/geoip.dat /usr/share/xray/geoip.dat 2>/dev/null || true
 ok "Xray OK"
 
 ############################################
 # NGINX CONFIG
 ############################################
 info "Konfigurasi Nginx"
+killall -9 nginx 2>/dev/null || true
+fuser -k 80/tcp 443/tcp 8080/tcp 2>/dev/null || true
+systemctl stop apache2 2>/dev/null || true
+systemctl disable apache2 2>/dev/null || true
 wget -q -O /etc/nginx/conf.d/xray.conf "$REPO_RAW/config/xray.conf"
 sed -i "s/xxx/$DOMAIN/g" /etc/nginx/conf.d/xray.conf
 wget -q -O /etc/nginx/nginx.conf "$REPO_RAW/config/nginx.conf"
@@ -246,6 +257,9 @@ iptables -I INPUT 2 -j XRAY_LIMIT 2>/dev/null || true
 EOF
 chmod +x /usr/local/sbin/firewall-limit
 /usr/local/sbin/firewall-limit "$IPTABLES_LIMIT_MODE"
+chmod -x /usr/share/netfilter-persistent/plugins.d/25-ip6tables 2>/dev/null || true
+mkdir -p /etc/iptables
+iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
 netfilter-persistent save 2>/dev/null || true
 ok "Firewall OK"
 

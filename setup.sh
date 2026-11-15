@@ -209,6 +209,13 @@ function memasang_paket_dasar() {
     clear
     print_install "Memasang Paket Dasar"
     export DEBIAN_FRONTEND=noninteractive
+    export NEEDRESTART_MODE=a
+    if [ -f /etc/needrestart/needrestart.conf ]; then
+        sed -i "s/#\$nrconf{restart} = 'i';/\$nrconf{restart} = 'a';/g" /etc/needrestart/needrestart.conf 2>/dev/null || true
+        sed -i "s/\$nrconf{restart} = 'i';/\$nrconf{restart} = 'a';/g" /etc/needrestart/needrestart.conf 2>/dev/null || true
+    fi
+    echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections 2>/dev/null || true
+    echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections 2>/dev/null || true
     if grep -rq "cermin.rumahweb.id" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
         echo -e "${YELLOW}Terdeteksi mirror cermin.rumahweb.id. Mengganti ke mirror resmi...${NC}"
         if grep -qi "ubuntu" /etc/os-release 2>/dev/null; then
@@ -233,12 +240,10 @@ function memasang_paket_dasar() {
     chronyc sourcestats -v 2>/dev/null || true
     chronyc tracking -v 2>/dev/null || true
     apt install -y --no-install-recommends software-properties-common || true
-    echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections 2>/dev/null || true
-    echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections 2>/dev/null || true
     apt install -y bsdextrautils 2>/dev/null || apt install -y bsdmainutils 2>/dev/null || true
     apt install -y \
       speedtest-cli vnstat libnss3-dev libnspr4-dev pkg-config libpam0g-dev \
-      libcap-ng-dev libcap-ng-utils libselinux1-dev libcurl4-nss-dev flex bison make libnss3-tools \
+      libcap-ng-dev libcap-ng-utils libselinux1-dev libcurl4-openssl-dev flex bison make libnss3-tools \
       libevent-dev bc rsyslog dos2unix zlib1g-dev libssl-dev libsqlite3-dev sed dirmngr \
       libxml-parser-perl build-essential gcc g++ python3 htop lsof tar wget curl git \
       unzip p7zip-full libc6 util-linux msmtp-mta ca-certificates bsd-mailx \
@@ -318,7 +323,9 @@ function memasang_folder_xray() {
     mkdir -p /etc/vless
     mkdir -p /etc/trojan
     mkdir -p /etc/shadowsocks
-    mkdir -p /usr/bin/xray/
+    [ -d /usr/bin/xray ] && rm -rf /usr/bin/xray
+    mkdir -p /usr/local/share/xray
+    mkdir -p /usr/share/xray
     mkdir -p /var/log/xray/
     mkdir -p /var/www/html
     mkdir -p /etc/limit/vmess/ip
@@ -330,11 +337,12 @@ function memasang_folder_xray() {
     mkdir -p /etc/limit/trojan
     mkdir -p /etc/limit/shadowsocks
     mkdir -p /etc/user-create
-    chmod +x /var/log/xray
+    chmod 755 /var/log/xray
     touch /etc/xray/domain
     touch /etc/user_locks.db
     touch /var/log/xray/access.log
     touch /var/log/xray/error.log
+    chmod 644 /var/log/xray/access.log /var/log/xray/error.log 2>/dev/null || true
     touch /etc/vmess/.vmess.db
     touch /etc/vless/.vless.db
     touch /etc/trojan/.trojan.db
@@ -346,6 +354,7 @@ function memasang_folder_xray() {
     echo "& plughin Account" >>/etc/trojan/.trojan.db
     echo "& plughin Account" >>/etc/shadowsocks/.shadowsocks.db
     echo "echo -e 'Vps Config User Account'" >> /etc/user-create/user.log
+    chown -R www-data:www-data /var/log/xray /etc/xray 2>/dev/null || true
     print_install "Folder Tambahan Untuk Xray"
 }
 function memasang_xray() {
@@ -353,8 +362,15 @@ function memasang_xray() {
     print_install "Memasang Core Xray Versi 25.5.16"
     domainSock_dir="/run/xray"
     ! [ -d $domainSock_dir ] && mkdir -p $domainSock_dir
-    chown www-data.www-data $domainSock_dir
+    chown -R www-data:www-data $domainSock_dir
     bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install -u www-data --version 25.5.16
+    [ -d /usr/bin/xray ] && rm -rf /usr/bin/xray
+    ln -sf /usr/local/bin/xray /usr/bin/xray
+    mkdir -p /usr/local/share/xray /usr/share/xray
+    wget -q -O /usr/local/share/xray/geosite.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat" 2>/dev/null || true
+    wget -q -O /usr/local/share/xray/geoip.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat" 2>/dev/null || true
+    cp -f /usr/local/share/xray/geosite.dat /usr/share/xray/geosite.dat 2>/dev/null || true
+    cp -f /usr/local/share/xray/geoip.dat /usr/share/xray/geoip.dat 2>/dev/null || true
     wget -O /etc/xray/config.json "${REPO}config/config.json" >/dev/null 2>&1
     wget -O /etc/systemd/system/runn.service "${REPO}files/runn.service" >/dev/null 2>&1
     domain=$(cat /etc/xray/domain)
@@ -388,6 +404,8 @@ LimitNOFILE=1000000
 [Install]
 WantedBy=multi-user.target
 EOF
+    chown -R www-data:www-data /run/xray /var/log/xray /etc/xray 2>/dev/null || true
+    [ -f /etc/xray/xray.key ] && chmod 644 /etc/xray/xray.key
     print_success "Konfigurasi Paket"
 }
 function memasang_ssh_tunnel(){
@@ -462,6 +480,7 @@ END
     chmod +x /etc/rc.local
     systemctl enable rc-local
     systemctl start rc-local.service
+    chmod -x /usr/share/netfilter-persistent/plugins.d/25-ip6tables 2>/dev/null || true
     ln -fs /usr/share/zoneinfo/Asia/Jakarta /etc/localtime
     print_success "rc.local & IPv6 Disabled"
 }
@@ -636,12 +655,17 @@ function memasang_fail2ban(){
 function memasang_netfilter(){
 clear
 print_install "Memasang Netfilter & IPtables"
-wget -q -O /usr/local/share/xray/geosite.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat" >/dev/null 2>&1
-wget -q -O /usr/local/share/xray/geoip.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat" >/dev/null 2>&1
-iptables-save > /etc/iptables.up.rules
-iptables-restore -t < /etc/iptables.up.rules
-netfilter-persistent save
-netfilter-persistent reload
+mkdir -p /usr/local/share/xray /usr/share/xray
+[ ! -f /usr/local/share/xray/geosite.dat ] && wget -q -O /usr/local/share/xray/geosite.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat" >/dev/null 2>&1 || true
+[ ! -f /usr/local/share/xray/geoip.dat ] && wget -q -O /usr/local/share/xray/geoip.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat" >/dev/null 2>&1 || true
+cp -f /usr/local/share/xray/geosite.dat /usr/share/xray/geosite.dat 2>/dev/null || true
+cp -f /usr/local/share/xray/geoip.dat /usr/share/xray/geoip.dat 2>/dev/null || true
+chmod -x /usr/share/netfilter-persistent/plugins.d/25-ip6tables 2>/dev/null || true
+mkdir -p /etc/iptables
+iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+iptables-save > /etc/iptables.up.rules 2>/dev/null || true
+netfilter-persistent save 2>/dev/null || true
+netfilter-persistent reload 2>/dev/null || true
 cd
 apt autoclean -y >/dev/null 2>&1
 apt autoremove -y >/dev/null 2>&1
@@ -650,13 +674,21 @@ print_success "Netfilter & IPtables"
 function memasang_restart(){
 clear
 print_install "Memulai Semua Services"
+killall -9 nginx 2>/dev/null || true
+fuser -k 80/tcp 443/tcp 8080/tcp 2>/dev/null || true
+systemctl stop apache2 2>/dev/null || true
+systemctl disable apache2 2>/dev/null || true
 systemctl daemon-reload
+chown -R www-data:www-data /run/xray /var/log/xray /etc/xray 2>/dev/null || true
+[ -f /etc/xray/xray.key ] && chmod 644 /etc/xray/xray.key
+chmod -x /usr/share/netfilter-persistent/plugins.d/25-ip6tables 2>/dev/null || true
 systemctl restart nginx
 systemctl restart ssh
 systemctl restart fail2ban
 systemctl restart vnstat
 systemctl restart cron
-systemctl start netfilter-persistent
+systemctl start netfilter-persistent 2>/dev/null || true
+systemctl restart netfilter-persistent 2>/dev/null || true
 systemctl enable --now nginx
 systemctl enable --now xray
 systemctl enable --now rc-local
@@ -920,8 +952,8 @@ function mulai_penginstallan(){
     clear
     setup_grub_env
     mengecek_akses_root
-    memasang_paket_dasar
     pengaturan_pertama
+    memasang_paket_dasar
     memasang_nginx
     memasang_folder_xray
     memasang_domain
