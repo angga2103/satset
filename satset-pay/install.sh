@@ -33,7 +33,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt update -y -qq
 apt install -y -qq python3 python3-pip python3-flask python3-qrcode python3-pil curl wget ufw jq 2>/dev/null || true
 
-pip3 install -q Flask qrcode pillow 2>/dev/null || true
+pip3 install -q --break-system-packages Flask qrcode pillow 2>/dev/null || pip3 install -q Flask qrcode pillow 2>/dev/null || true
 
 # 3. Setup Directory
 echo -e "${CYAN}[2/4] Menyiapkan direktori aplikasi...${NC}"

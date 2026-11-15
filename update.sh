@@ -27,6 +27,36 @@ ok(){ echo -e "\e[1;32m[OK]\e[0m $*"; }
 warn(){ echo -e "\e[1;33m[WARN]\e[0m $*"; }
 die(){ echo -e "\e[1;31m[FATAL]\e[0m $*"; exit 1; }
 
+safe_stop_port_conflicts() {
+    local target_ports=(80 443 8080)
+    for port in "${target_ports[@]}"; do
+        local pids
+        pids=$(ss -lptn "sport = :$port" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
+        if [ -z "$pids" ]; then
+            pids=$(lsof -t -i :"$port" -sTCP:LISTEN 2>/dev/null | sort -u || true)
+        fi
+
+        if [ -n "$pids" ]; then
+            for pid in $pids; do
+                local pname
+                pname=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
+                if [[ "$pname" == *"nginx"* ]]; then
+                    info "Menghentikan proses Nginx lama (PID: $pid)..."
+                    kill -15 "$pid" 2>/dev/null || true
+                    sleep 0.5
+                    kill -9 "$pid" 2>/dev/null || true
+                elif [[ "$pname" == *"apache"* ]] || [[ "$pname" == *"httpd"* ]]; then
+                    warn "Terdeteksi Web Server non-Nginx ($pname, PID: $pid) di port $port. Menonaktifkan..."
+                    systemctl stop apache2 2>/dev/null || systemctl stop httpd 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+                    systemctl disable apache2 2>/dev/null || true
+                else
+                    warn "Port $port digunakan oleh proses lain: $pname (PID: $pid)"
+                fi
+            done
+        fi
+    done
+}
+
 ############################################
 # VALIDASI
 ############################################
@@ -34,7 +64,7 @@ die(){ echo -e "\e[1;31m[FATAL]\e[0m $*"; exit 1; }
 
 . /etc/os-release
 [[ "${ID}" == "ubuntu" || "${ID}" == "debian" ]] || die "OS tidak didukung"
-[[ "$(uname -m)" == "x86_64" ]] || die "Arsitektur tidak didukung"
+[[ "$(uname -m)" == "x86_64" || "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]] || die "Arsitektur tidak didukung"
 
 ############################################
 # PRECHECK
@@ -65,20 +95,29 @@ apt install -y \
   iptables iptables-persistent \
   fail2ban vnstat rsyslog dropbear \
   software-properties-common
+apt install -y bind9-dnsutils 2>/dev/null || apt install -y dnsutils 2>/dev/null || true
+apt install -y bsdextrautils 2>/dev/null || apt install -y bsdmainutils 2>/dev/null || true
+apt install -y libcurl4-openssl-dev 2>/dev/null || true
 ok "Paket dasar OK"
 
 ############################################
 # STRUKTUR DIREKTORI (KOMPATIBEL REPO)
 ############################################
 info "Menyiapkan direktori"
-mkdir -p /etc/xray /var/log/xray /var/www/html
+mkdir -p /etc/xray /var/log/xray /run/xray /var/www/html
+chown root:root /etc/xray
+chmod 755 /etc/xray
+chown -R www-data:www-data /var/log/xray /run/xray
+chmod 755 /var/log/xray /run/xray
+touch /var/log/xray/access.log /var/log/xray/error.log
+chmod 644 /var/log/xray/access.log /var/log/xray/error.log 2>/dev/null || true
+chown www-data:www-data /var/log/xray/access.log /var/log/xray/error.log 2>/dev/null || true
 mkdir -p /etc/{vmess,vless,trojan,shadowsocks,ssh,bot}
 mkdir -p /etc/limit/{vmess,vless,trojan,shadowsocks,ssh}/{ip,}
 mkdir -p /detail/{vmess,vless,trojan,shadowsocks,ssh}
 touch /etc/ssh/.ssh.db
 mkdir -p /etc/user-create /usr/local/sbin /usr/local/bin
-touch /etc/xray/domain /var/log/xray/{access.log,error.log}
-chown -R www-data:www-data /var/log/xray
+touch /etc/xray/domain
 ok "Direktori siap"
 
 # Auto-detect and fix IPv4 in /etc/xray/ipvps (repair IPv6 corruption)
@@ -146,8 +185,11 @@ if [ ! -s /etc/xray/xray.crt ] || [ ! -s /etc/xray/xray.key ]; then
     -keyout /etc/xray/xray.key -out /etc/xray/xray.crt \
     -subj "/C=ID/ST=Jakarta/L=Jakarta/O=VPN/OU=Server/CN=$DOMAIN" >/dev/null 2>&1
 fi
-chmod 644 /etc/xray/xray.key
-chown -R www-data:www-data /etc/xray /var/log/xray /run/xray 2>/dev/null || true
+chown root:www-data /etc/xray/xray.key 2>/dev/null || chown root:root /etc/xray/xray.key
+chmod 640 /etc/xray/xray.key
+chmod 644 /etc/xray/xray.crt
+chown root:root /etc/xray
+chmod 755 /etc/xray
 ok "SSL OK"
 
 ############################################
@@ -155,14 +197,44 @@ ok "SSL OK"
 ############################################
 info "Install Xray $XRAY_VERSION"
 mkdir -p /run/xray /var/log/xray /etc/xray
+chown -R www-data:www-data /run/xray /var/log/xray
+chmod 755 /run/xray /var/log/xray
 touch /var/log/xray/access.log /var/log/xray/error.log 2>/dev/null || true
 chmod 644 /var/log/xray/access.log /var/log/xray/error.log 2>/dev/null || true
-chown -R www-data:www-data /run/xray /var/log/xray /etc/xray 2>/dev/null || true
-bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" \
-  @ install -u www-data --version "$XRAY_VERSION"
+chown www-data:www-data /var/log/xray/access.log /var/log/xray/error.log 2>/dev/null || true
+
+ARCH_DETECT=$(uname -m)
+XRAY_ARCH="64"
+case "$ARCH_DETECT" in
+  x86_64|amd64) XRAY_ARCH="64" ;;
+  aarch64|arm64) XRAY_ARCH="arm64-v8a" ;;
+  armv7l|armv7) XRAY_ARCH="arm32-v7a" ;;
+  *) XRAY_ARCH="64" ;;
+esac
+
+if curl -fsSL --connect-timeout 10 "https://github.com/XTLS/Xray-install/raw/main/install-release.sh" -o /tmp/xray-install.sh 2>/dev/null; then
+  bash /tmp/xray-install.sh install -u www-data --version "$XRAY_VERSION" || true
+  rm -f /tmp/xray-install.sh
+fi
+
+if [ ! -x /usr/local/bin/xray ]; then
+  warn "Mengunduh langsung binary Xray Core v$XRAY_VERSION untuk arsitektur $ARCH_DETECT ($XRAY_ARCH)..."
+  TMP_ZIP="/tmp/Xray-core.zip"
+  if curl -fsSL --connect-timeout 15 -o "$TMP_ZIP" "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-${XRAY_ARCH}.zip" 2>/dev/null || \
+     wget -q --timeout=15 -O "$TMP_ZIP" "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-${XRAY_ARCH}.zip"; then
+    mkdir -p /tmp/xray_bin
+    unzip -q -o "$TMP_ZIP" -d /tmp/xray_bin/
+    mv -f /tmp/xray_bin/xray /usr/local/bin/xray
+    chmod 755 /usr/local/bin/xray
+    rm -rf /tmp/xray_bin "$TMP_ZIP"
+  fi
+fi
+
 [ -d /usr/bin/xray ] && rm -rf /usr/bin/xray
 ln -sf /usr/local/bin/xray /usr/bin/xray
 wget -q -O /etc/xray/config.json "$REPO_RAW/config/config.json"
+chown root:root /etc/xray/config.json 2>/dev/null || true
+chmod 644 /etc/xray/config.json 2>/dev/null || true
 mkdir -p /usr/local/share/xray /usr/share/xray
 wget -q -O /usr/local/share/xray/geosite.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat" 2>/dev/null || true
 wget -q -O /usr/local/share/xray/geoip.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat" 2>/dev/null || true
@@ -174,10 +246,7 @@ ok "Xray OK"
 # NGINX CONFIG
 ############################################
 info "Konfigurasi Nginx"
-killall -9 nginx 2>/dev/null || true
-fuser -k 80/tcp 443/tcp 8080/tcp 2>/dev/null || true
-systemctl stop apache2 2>/dev/null || true
-systemctl disable apache2 2>/dev/null || true
+safe_stop_port_conflicts
 wget -q -O /etc/nginx/conf.d/xray.conf "$REPO_RAW/config/xray.conf"
 sed -i "s/xxx/$DOMAIN/g" /etc/nginx/conf.d/xray.conf
 wget -q -O /etc/nginx/nginx.conf "$REPO_RAW/config/nginx.conf"
@@ -257,9 +326,19 @@ iptables -I INPUT 2 -j XRAY_LIMIT 2>/dev/null || true
 EOF
 chmod +x /usr/local/sbin/firewall-limit
 /usr/local/sbin/firewall-limit "$IPTABLES_LIMIT_MODE"
-chmod -x /usr/share/netfilter-persistent/plugins.d/25-ip6tables 2>/dev/null || true
 mkdir -p /etc/iptables
+iptables -I INPUT -p tcp --dport 22 -j ACCEPT 2>/dev/null || true
+iptables -I INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
 iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+
+if [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null)" != "1" ] && command -v ip6tables >/dev/null 2>&1 && ip6tables -L -n >/dev/null 2>&1; then
+    ip6tables -I INPUT -p tcp --dport 22 -j ACCEPT 2>/dev/null || true
+    ip6tables -I INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+    ip6tables-save > /etc/iptables/rules.v6 2>/dev/null || true
+    [ -f /usr/share/netfilter-persistent/plugins.d/25-ip6tables ] && chmod +x /usr/share/netfilter-persistent/plugins.d/25-ip6tables 2>/dev/null || true
+else
+    [ -f /usr/share/netfilter-persistent/plugins.d/25-ip6tables ] && chmod -x /usr/share/netfilter-persistent/plugins.d/25-ip6tables 2>/dev/null || true
+fi
 netfilter-persistent save 2>/dev/null || true
 ok "Firewall OK"
 
@@ -527,6 +606,20 @@ ok "Menu & Bot Store OK"
 ############################################
 # FINAL
 ############################################
+chown root:root /etc/xray 2>/dev/null || true
+chmod 755 /etc/xray 2>/dev/null || true
+chown root:root /etc/xray/config.json 2>/dev/null || true
+chmod 644 /etc/xray/config.json 2>/dev/null || true
+[ -f /etc/xray/xray.key ] && chown root:www-data /etc/xray/xray.key 2>/dev/null && chmod 640 /etc/xray/xray.key
+[ -f /etc/xray/xray.crt ] && chown root:root /etc/xray/xray.crt 2>/dev/null && chmod 644 /etc/xray/xray.crt
+mkdir -p /var/log/xray /run/xray
+chown -R www-data:www-data /var/log/xray /run/xray 2>/dev/null || true
+chmod 755 /var/log/xray /run/xray 2>/dev/null || true
+
+if [ -x /usr/local/bin/xray ]; then
+    /usr/local/bin/xray run -test -config /etc/xray/config.json >/dev/null 2>&1 || true
+fi
+
 systemctl daemon-reload
 systemctl enable --now nginx xray cron vnstat dropbear ws-stunnel badvpn-udpgw@7100 badvpn-udpgw@7200 badvpn-udpgw@7300 satset-node
 if [ -x /usr/local/bin/satset-node ]; then

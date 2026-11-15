@@ -1,0 +1,33 @@
+name: SATSET Continuous Integration & Regression Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-suite:
+    name: Test Suite on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-24.04, ubuntu-22.04, ubuntu-20.04 ]
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Make Scripts Executable
+        run: |
+          chmod +x tests/*.sh tests/*.py setup.sh update.sh
+
+      - name: Run Master Test Runner
+        run: |
+          bash tests/run_all_tests.sh

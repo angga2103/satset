@@ -86,7 +86,7 @@ else
     echo -e "${BIWhite}IP Address ${ungu}${IP}${NC}"
 fi
 ARCH=$(uname -m)
-if [[ $ARCH == "x86_64" ]]; then
+if [[ $ARCH == "x86_64" || $ARCH == "aarch64" || $ARCH == "arm64" ]]; then
     echo -e "${BIWhite}Your Architecture Is Supported ${ungu}${ARCH}${NC}"
 else
     echo -e "${RED}Your Architecture Is Not Supported ${YELLOW}${ARCH}${NC}"
@@ -125,6 +125,35 @@ function print_success() {
         sleep 2
     fi
 }
+function safe_stop_port_conflicts() {
+    local target_ports=(80 443 8080)
+    for port in "${target_ports[@]}"; do
+        local pids
+        pids=$(ss -lptn "sport = :$port" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
+        if [ -z "$pids" ]; then
+            pids=$(lsof -t -i :"$port" -sTCP:LISTEN 2>/dev/null | sort -u || true)
+        fi
+
+        if [ -n "$pids" ]; then
+            for pid in $pids; do
+                local pname
+                pname=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
+                if [[ "$pname" == *"nginx"* ]]; then
+                    echo "Menghentikan proses Nginx lama (PID: $pid)..."
+                    kill -15 "$pid" 2>/dev/null || true
+                    sleep 0.5
+                    kill -9 "$pid" 2>/dev/null || true
+                elif [[ "$pname" == *"apache"* ]] || [[ "$pname" == *"httpd"* ]]; then
+                    echo "Terdeteksi Web Server non-Nginx ($pname, PID: $pid) di port $port. Menonaktifkan..."
+                    systemctl stop apache2 2>/dev/null || systemctl stop httpd 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+                    systemctl disable apache2 2>/dev/null || true
+                else
+                    echo "[WARN] Port $port digunakan oleh proses lain: $pname (PID: $pid)"
+                fi
+            done
+        fi
+    done
+}
 function mengecek_akses_root() {
     if [[ 0 == "$UID" ]]; then
         print_ok "Root user: Starting installation process"
@@ -137,14 +166,16 @@ end=$(date +%s)
 secs_to_human $((end-start))
 print_install "Memasang Direktori dan log file Xray"
 mkdir -p /etc/xray
+chown root:root /etc/xray
+chmod 755 /etc/xray
 IPV4_DETECT=$(curl -4 -s --max-time 3 ipv4.icanhazip.com 2>/dev/null || curl -4 -s --max-time 3 ifconfig.me 2>/dev/null || curl -4 -s --max-time 3 ipinfo.io/ip 2>/dev/null || echo "")
 echo "$IPV4_DETECT" > /etc/xray/ipvps
 touch /etc/xray/domain
-mkdir -p /var/log/xray
-chown www-data:www-data /var/log/xray
-chmod +x /var/log/xray
-touch /var/log/xray/access.log
-touch /var/log/xray/error.log
+mkdir -p /var/log/xray /run/xray
+touch /var/log/xray/access.log /var/log/xray/error.log
+chmod 755 /var/log/xray /run/xray
+chmod 644 /var/log/xray/access.log /var/log/xray/error.log 2>/dev/null || true
+chown -R www-data:www-data /var/log/xray /run/xray
 mkdir -p /var/lib >/dev/null 2>&1
 while IFS=":" read -r a b; do
     case $a in
@@ -241,13 +272,14 @@ function memasang_paket_dasar() {
     chronyc tracking -v 2>/dev/null || true
     apt install -y --no-install-recommends software-properties-common || true
     apt install -y bsdextrautils 2>/dev/null || apt install -y bsdmainutils 2>/dev/null || true
+    apt install -y bind9-dnsutils 2>/dev/null || apt install -y dnsutils 2>/dev/null || true
     apt install -y \
       speedtest-cli vnstat libnss3-dev libnspr4-dev pkg-config libpam0g-dev \
       libcap-ng-dev libcap-ng-utils libselinux1-dev libcurl4-openssl-dev flex bison make libnss3-tools \
       libevent-dev bc rsyslog dos2unix zlib1g-dev libssl-dev libsqlite3-dev sed dirmngr \
-      libxml-parser-perl build-essential gcc g++ python3 htop lsof tar wget curl git \
+      libxml-parser-perl build-essential gcc g++ python3 python3-pip python3-venv htop lsof tar wget curl git \
       unzip p7zip-full libc6 util-linux msmtp-mta ca-certificates bsd-mailx \
-      dropbear netfilter-persistent net-tools gnupg lsb-release cmake screen xz-utils apt-transport-https dnsutils jq easy-rsa || true
+      dropbear netfilter-persistent net-tools gnupg lsb-release cmake screen xz-utils apt-transport-https jq easy-rsa || true
     apt clean
     apt autoremove -y
     apt remove --purge -y exim4 ufw firewalld
@@ -292,7 +324,8 @@ function memasang_ssl() {
     mkdir /root/.acme.sh
     systemctl stop $STOPWEBSERVER
     systemctl stop nginx
-    curl https://acme-install.netlify.app/acme.sh -o /root/.acme.sh/acme.sh
+    curl https://acme-install.netlify.app/acme.sh -o /root/.acme.sh/acme.sh 2>/dev/null || \
+    curl -fsSL https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh -o /root/.acme.sh/acme.sh 2>/dev/null || true
     chmod +x /root/.acme.sh/acme.sh
     /root/.acme.sh/acme.sh --upgrade --auto-upgrade
     /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt
@@ -304,7 +337,9 @@ function memasang_ssl() {
           -keyout /etc/xray/xray.key -out /etc/xray/xray.crt \
           -subj "/C=ID/ST=Jakarta/L=Jakarta/O=VPN/OU=Server/CN=$domain" >/dev/null 2>&1
     fi
-    chmod 644 /etc/xray/xray.key 2>/dev/null || chmod 777 /etc/xray/xray.key
+    chown root:www-data /etc/xray/xray.key 2>/dev/null || chown root:root /etc/xray/xray.key
+    chmod 640 /etc/xray/xray.key
+    chmod 644 /etc/xray/xray.crt
     print_success "Sertifikat SSL Pada Domain"
 }
 function memasang_folder_xray() {
@@ -354,16 +389,49 @@ function memasang_folder_xray() {
     echo "& plughin Account" >>/etc/trojan/.trojan.db
     echo "& plughin Account" >>/etc/shadowsocks/.shadowsocks.db
     echo "echo -e 'Vps Config User Account'" >> /etc/user-create/user.log
-    chown -R www-data:www-data /var/log/xray /etc/xray 2>/dev/null || true
+    chown root:root /etc/xray 2>/dev/null || true
+    chmod 755 /etc/xray 2>/dev/null || true
+    chown -R www-data:www-data /var/log/xray 2>/dev/null || true
     print_install "Folder Tambahan Untuk Xray"
 }
 function memasang_xray() {
     clear
     print_install "Memasang Core Xray Versi 25.5.16"
     domainSock_dir="/run/xray"
-    ! [ -d $domainSock_dir ] && mkdir -p $domainSock_dir
+    mkdir -p $domainSock_dir
     chown -R www-data:www-data $domainSock_dir
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install -u www-data --version 25.5.16
+    chmod 755 $domainSock_dir
+
+    local arch
+    arch=$(uname -m)
+    local xray_arch="64"
+    case "$arch" in
+        x86_64|amd64) xray_arch="64" ;;
+        aarch64|arm64) xray_arch="arm64-v8a" ;;
+        armv7l|armv7) xray_arch="arm32-v7a" ;;
+        *) xray_arch="64" ;;
+    esac
+
+    # 1. Coba via script installer resmi XTLS
+    if curl -fsSL --connect-timeout 10 "https://github.com/XTLS/Xray-install/raw/main/install-release.sh" -o /tmp/xray-install.sh 2>/dev/null; then
+        bash /tmp/xray-install.sh install -u www-data --version 25.5.16 || true
+        rm -f /tmp/xray-install.sh
+    fi
+
+    # 2. Fallback direct download binary resmi jika install script gagal
+    if [ ! -x /usr/local/bin/xray ]; then
+        echo -e "${YELLOW}Mengunduh binary Xray Core v25.5.16 langsung dari GitHub Releases (${xray_arch})...${NC}"
+        local download_url="https://github.com/XTLS/Xray-core/releases/download/v25.5.16/Xray-linux-${xray_arch}.zip"
+        local tmp_zip="/tmp/Xray-core.zip"
+        if curl -fsSL --connect-timeout 15 -o "$tmp_zip" "$download_url" 2>/dev/null || wget -q --timeout=15 -O "$tmp_zip" "$download_url"; then
+            mkdir -p /tmp/xray_bin
+            unzip -q -o "$tmp_zip" -d /tmp/xray_bin/
+            mv -f /tmp/xray_bin/xray /usr/local/bin/xray
+            chmod 755 /usr/local/bin/xray
+            rm -rf /tmp/xray_bin "$tmp_zip"
+        fi
+    fi
+
     [ -d /usr/bin/xray ] && rm -rf /usr/bin/xray
     ln -sf /usr/local/bin/xray /usr/bin/xray
     mkdir -p /usr/local/share/xray /usr/share/xray
@@ -404,8 +472,14 @@ LimitNOFILE=1000000
 [Install]
 WantedBy=multi-user.target
 EOF
-    chown -R www-data:www-data /run/xray /var/log/xray /etc/xray 2>/dev/null || true
-    [ -f /etc/xray/xray.key ] && chmod 644 /etc/xray/xray.key
+    chown root:root /etc/xray 2>/dev/null || true
+    chmod 755 /etc/xray 2>/dev/null || true
+    chown root:root /etc/xray/config.json 2>/dev/null || true
+    chmod 644 /etc/xray/config.json 2>/dev/null || true
+    [ -f /etc/xray/xray.key ] && chown root:www-data /etc/xray/xray.key 2>/dev/null && chmod 640 /etc/xray/xray.key
+    [ -f /etc/xray/xray.crt ] && chown root:root /etc/xray/xray.crt 2>/dev/null && chmod 644 /etc/xray/xray.crt
+    mkdir -p /var/log/xray /run/xray
+    chown -R www-data:www-data /var/log/xray /run/xray 2>/dev/null || true
     print_success "Konfigurasi Paket"
 }
 function memasang_ssh_tunnel(){
@@ -660,10 +734,22 @@ mkdir -p /usr/local/share/xray /usr/share/xray
 [ ! -f /usr/local/share/xray/geoip.dat ] && wget -q -O /usr/local/share/xray/geoip.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat" >/dev/null 2>&1 || true
 cp -f /usr/local/share/xray/geosite.dat /usr/share/xray/geosite.dat 2>/dev/null || true
 cp -f /usr/local/share/xray/geoip.dat /usr/share/xray/geoip.dat 2>/dev/null || true
-chmod -x /usr/share/netfilter-persistent/plugins.d/25-ip6tables 2>/dev/null || true
+
 mkdir -p /etc/iptables
+iptables -I INPUT -p tcp --dport 22 -j ACCEPT 2>/dev/null || true
+iptables -I INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
 iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
 iptables-save > /etc/iptables.up.rules 2>/dev/null || true
+
+if [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null)" != "1" ] && command -v ip6tables >/dev/null 2>&1 && ip6tables -L -n >/dev/null 2>&1; then
+    ip6tables -I INPUT -p tcp --dport 22 -j ACCEPT 2>/dev/null || true
+    ip6tables -I INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+    ip6tables-save > /etc/iptables/rules.v6 2>/dev/null || true
+    [ -f /usr/share/netfilter-persistent/plugins.d/25-ip6tables ] && chmod +x /usr/share/netfilter-persistent/plugins.d/25-ip6tables 2>/dev/null || true
+else
+    [ -f /usr/share/netfilter-persistent/plugins.d/25-ip6tables ] && chmod -x /usr/share/netfilter-persistent/plugins.d/25-ip6tables 2>/dev/null || true
+fi
+
 netfilter-persistent save 2>/dev/null || true
 netfilter-persistent reload 2>/dev/null || true
 cd
@@ -674,14 +760,23 @@ print_success "Netfilter & IPtables"
 function memasang_restart(){
 clear
 print_install "Memulai Semua Services"
-killall -9 nginx 2>/dev/null || true
-fuser -k 80/tcp 443/tcp 8080/tcp 2>/dev/null || true
-systemctl stop apache2 2>/dev/null || true
-systemctl disable apache2 2>/dev/null || true
+safe_stop_port_conflicts
 systemctl daemon-reload
-chown -R www-data:www-data /run/xray /var/log/xray /etc/xray 2>/dev/null || true
-[ -f /etc/xray/xray.key ] && chmod 644 /etc/xray/xray.key
-chmod -x /usr/share/netfilter-persistent/plugins.d/25-ip6tables 2>/dev/null || true
+
+chown root:root /etc/xray 2>/dev/null || true
+chmod 755 /etc/xray 2>/dev/null || true
+chown root:root /etc/xray/config.json 2>/dev/null || true
+chmod 644 /etc/xray/config.json 2>/dev/null || true
+[ -f /etc/xray/xray.key ] && chown root:www-data /etc/xray/xray.key 2>/dev/null && chmod 640 /etc/xray/xray.key
+[ -f /etc/xray/xray.crt ] && chown root:root /etc/xray/xray.crt 2>/dev/null && chmod 644 /etc/xray/xray.crt
+mkdir -p /var/log/xray /run/xray
+chown -R www-data:www-data /var/log/xray /run/xray 2>/dev/null || true
+chmod 755 /var/log/xray /run/xray 2>/dev/null || true
+
+if [ -x /usr/local/bin/xray ]; then
+    /usr/local/bin/xray run -test -config /etc/xray/config.json >/dev/null 2>&1 || true
+fi
+
 systemctl restart nginx
 systemctl restart ssh
 systemctl restart fail2ban
