@@ -428,6 +428,9 @@ function memasang_xray() {
             unzip -q -o "$tmp_zip" -d /tmp/xray_bin/
             mv -f /tmp/xray_bin/xray /usr/local/bin/xray
             chmod 755 /usr/local/bin/xray
+            mkdir -p /usr/local/share/xray /usr/share/xray
+            [ -f /tmp/xray_bin/geosite.dat ] && cp -n /tmp/xray_bin/geosite.dat /usr/local/share/xray/ 2>/dev/null || true
+            [ -f /tmp/xray_bin/geoip.dat ] && cp -n /tmp/xray_bin/geoip.dat /usr/local/share/xray/ 2>/dev/null || true
             rm -rf /tmp/xray_bin "$tmp_zip"
         fi
     fi
@@ -439,7 +442,12 @@ function memasang_xray() {
     wget -q -O /usr/local/share/xray/geoip.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat" 2>/dev/null || true
     cp -f /usr/local/share/xray/geosite.dat /usr/share/xray/geosite.dat 2>/dev/null || true
     cp -f /usr/local/share/xray/geoip.dat /usr/share/xray/geoip.dat 2>/dev/null || true
-    wget -O /etc/xray/config.json "${REPO}config/config.json" >/dev/null 2>&1
+    if [ -f /etc/xray/config.json ]; then
+        cp -f /etc/xray/config.json /etc/xray/config.json.bak 2>/dev/null || true
+    fi
+    if [ ! -s /etc/xray/config.json ]; then
+        wget -O /etc/xray/config.json "${REPO}config/config.json" >/dev/null 2>&1
+    fi
     wget -O /etc/systemd/system/runn.service "${REPO}files/runn.service" >/dev/null 2>&1
     domain=$(cat /etc/xray/domain)
     IPVS=$(cat /etc/xray/ipvps)

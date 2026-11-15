@@ -226,15 +226,47 @@ if [ ! -x /usr/local/bin/xray ]; then
     unzip -q -o "$TMP_ZIP" -d /tmp/xray_bin/
     mv -f /tmp/xray_bin/xray /usr/local/bin/xray
     chmod 755 /usr/local/bin/xray
+    mkdir -p /usr/local/share/xray /usr/share/xray
+    [ -f /tmp/xray_bin/geosite.dat ] && cp -n /tmp/xray_bin/geosite.dat /usr/local/share/xray/ 2>/dev/null || true
+    [ -f /tmp/xray_bin/geoip.dat ] && cp -n /tmp/xray_bin/geoip.dat /usr/local/share/xray/ 2>/dev/null || true
     rm -rf /tmp/xray_bin "$TMP_ZIP"
   fi
 fi
 
 [ -d /usr/bin/xray ] && rm -rf /usr/bin/xray
 ln -sf /usr/local/bin/xray /usr/bin/xray
-wget -q -O /etc/xray/config.json "$REPO_RAW/config/config.json"
+
+# Lindungi akun pengguna: buat backup dan jangan timpa config.json jika sudah ada
+if [ -f /etc/xray/config.json ]; then
+  cp -f /etc/xray/config.json /etc/xray/config.json.bak 2>/dev/null || true
+fi
+if [ ! -s /etc/xray/config.json ]; then
+  wget -q -O /etc/xray/config.json "$REPO_RAW/config/config.json"
+fi
 chown root:root /etc/xray/config.json 2>/dev/null || true
 chmod 644 /etc/xray/config.json 2>/dev/null || true
+
+if [ ! -f /etc/systemd/system/xray.service ]; then
+cat > /etc/systemd/system/xray.service <<'EOF'
+[Unit]
+Description=Xray Service
+Documentation=https://github.com
+After=network.target nss-lookup.target
+[Service]
+User=www-data
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ExecStart=/usr/local/bin/xray run -config /etc/xray/config.json
+Restart=on-failure
+RestartPreventExitStatus=23
+LimitNPROC=10000
+LimitNOFILE=1000000
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload 2>/dev/null || true
+fi
 mkdir -p /usr/local/share/xray /usr/share/xray
 wget -q -O /usr/local/share/xray/geosite.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat" 2>/dev/null || true
 wget -q -O /usr/local/share/xray/geoip.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat" 2>/dev/null || true
