@@ -205,7 +205,19 @@ function pengaturan_pertama() {
 function memasang_nginx() {
     clear
     print_install "Memasang Nginx & konfigurasinya"
-    apt install nginx -y
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y
+    apt-get install --only-upgrade -y nginx 2>/dev/null || apt-get install -y nginx
+
+    # Ketahanan systemd: otomatis restart Nginx jika crash atau dimatikan mendadak
+    mkdir -p /etc/systemd/system/nginx.service.d
+    cat > /etc/systemd/system/nginx.service.d/override.conf <<'EOF'
+[Service]
+Restart=always
+RestartSec=3s
+EOF
+    systemctl daemon-reload 2>/dev/null || true
+
     rm -f /etc/nginx/sites-enabled/default
     if [ ! -f /etc/nginx/mime.types ]; then
     cat <<EOL | tee /etc/nginx/mime.types > /dev/null
@@ -251,6 +263,7 @@ function memasang_paket_dasar() {
         echo -e "${YELLOW}Terdeteksi mirror cermin.rumahweb.id. Mengganti ke mirror resmi...${NC}"
         if grep -qi "ubuntu" /etc/os-release 2>/dev/null; then
             sed -i 's/cermin.rumahweb.id/archive.ubuntu.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+            sed -i 's/archive.ubuntu.com\/ubuntu\([[:space:]]\+.*-security\)/security.ubuntu.com\/ubuntu\1/g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
         else
             sed -i 's/cermin.rumahweb.id/deb.debian.org/g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
         fi
